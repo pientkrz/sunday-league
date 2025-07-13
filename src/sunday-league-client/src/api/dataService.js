@@ -37,6 +37,8 @@ export const getTeam = (teamId) => {
 
 export const getAllTeams = () => fakeFetch(allTeams);
 
+export const getAllMatches = () => fakeFetch(allMatches);
+
 // This would be a POST/PUT request in a real app
 export const saveMatches = (newMatches) => {
     allMatches.push(...newMatches);
@@ -69,4 +71,49 @@ export const createSeason = (leagueId, seasonName, teamIds) => {
     };
     seasons.push(newSeason);
     return fakeFetch({ success: true, season: newSeason });
+};
+
+// This would be a POST request in a real app
+export const createTeam = (teamName) => {
+    const newTeam = {
+        id: `t${allTeams.length + 1}`,
+        name: teamName,
+    };
+    allTeams.push(newTeam);
+    return fakeFetch({ success: true, team: newTeam });
+};
+
+// This would be a DELETE request in a real app
+export const deleteTeam = (teamId) => {
+    // Safeguard: Check if the team has any matches
+    const hasMatches = allMatches.some(m => m.homeTeamId === teamId || m.awayTeamId === teamId);
+    if (hasMatches) {
+        return fakeFetch({ success: false, error: 'Cannot delete a team with match history.' });
+    }
+
+    const teamIndex = allTeams.findIndex(t => t.id === teamId);
+    if (teamIndex === -1) {
+        return fakeFetch({ success: false, error: 'Team not found.' });
+    }
+
+    // Remove team from the main list
+    allTeams.splice(teamIndex, 1);
+
+    // Also remove team from any seasons they might have been added to
+    seasons.forEach(s => {
+        s.teams = s.teams.filter(tId => tId !== teamId);
+    });
+
+    return fakeFetch({ success: true });
+};
+
+// This would be a PUT/PATCH request in a real app
+export const updateTeamName = (teamId, newName) => {
+    const teamIndex = allTeams.findIndex(t => t.id === teamId);
+    if (teamIndex === -1) {
+        return fakeFetch({ success: false, error: 'Team not found' });
+    }
+    const updatedTeam = { ...allTeams[teamIndex], name: newName };
+    allTeams[teamIndex] = updatedTeam;
+    return fakeFetch({ success: true, team: updatedTeam });
 };
