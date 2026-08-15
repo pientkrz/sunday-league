@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import './App.css';
 import './components/FixtureManagement.css';
+import './components/ScoringRules.css';
 import { api, boardApi, boardFormApi } from './api/client';
 import BoardAccess from './components/BoardAccess';
 import MemberDirectory from './components/MemberDirectory';
@@ -117,10 +118,17 @@ function BoardHome({ session, leagues, onSuccess, onError }) {
 
 function LeagueSettings({ leagues, isOwner, onSuccess, onError, reload }) {
   const [newLeague, setNewLeague] = useState('');
-  const save = async league => { try { await boardApi(`/api/board/leagues/${league.id}`, 'PUT', { name: league.name, promotionPlaces: Number(league.promotionPlaces), relegationPlaces: Number(league.relegationPlaces), playoffPlaces: Number(league.playoffPlaces), isPublished: league.isPublished }); onSuccess(`${league.name} saved.`); await reload(); } catch (requestError) { onError(requestError.message); } };
-  const create = async event => { event.preventDefault(); try { await boardApi('/api/board/leagues', 'POST', { name: newLeague, promotionPlaces: 0, relegationPlaces: 0, playoffPlaces: 0, isPublished: false }); setNewLeague(''); onSuccess('League created.'); await reload(); } catch (requestError) { onError(requestError.message); } };
+  const save = async league => { try { await boardApi(`/api/board/leagues/${league.id}`, 'PUT', { name: league.name, promotionPlaces: Number(league.promotionPlaces), relegationPlaces: Number(league.relegationPlaces), playoffPlaces: Number(league.playoffPlaces), winPoints: Number(league.winPoints), drawPoints: Number(league.drawPoints), lossPoints: Number(league.lossPoints), tiebreaker: league.tiebreaker, isPublished: league.isPublished }); onSuccess(`${league.name} saved.`); await reload(); } catch (requestError) { onError(requestError.message); } };
+  const create = async event => { event.preventDefault(); try { await boardApi('/api/board/leagues', 'POST', { name: newLeague, promotionPlaces: 0, relegationPlaces: 0, playoffPlaces: 0, winPoints: 3, drawPoints: 1, lossPoints: 0, tiebreaker: 0, isPublished: false }); setNewLeague(''); onSuccess('League created.'); await reload(); } catch (requestError) { onError(requestError.message); } };
   const moveTeam = async (team, leagueId) => { try { await boardApi(`/api/board/teams/${team.id}`, 'PUT', { name: team.name, shortName: team.shortName, leagueId }); onSuccess(`${team.name} moved.`); await reload(); } catch (requestError) { onError(requestError.message); } };
-  return <div className="settings-stack">{leagues.map(league => <LeagueCard key={league.id} league={league} allLeagues={leagues} isOwner={isOwner} onMove={moveTeam} onSave={save} onSuccess={onSuccess} onError={onError} reload={reload} />)}{isOwner && <form className="card add-league" onSubmit={create}><label>New league name<input value={newLeague} onChange={event => setNewLeague(event.target.value)} required maxLength="120" /></label><button className="primary">+ Add league</button></form>}</div>;
+  return <div className="settings-stack"><ScoringRules leagues={leagues} onSave={save} />{leagues.map(league => <LeagueCard key={league.id} league={league} allLeagues={leagues} isOwner={isOwner} onMove={moveTeam} onSave={save} onSuccess={onSuccess} onError={onError} reload={reload} />)}{isOwner && <form className="card add-league" onSubmit={create}><label>New league name<input value={newLeague} onChange={event => setNewLeague(event.target.value)} required maxLength="120" /></label><button className="primary">+ Add league</button></form>}</div>;
+}
+
+function ScoringRules({ leagues, onSave }) {
+  const [drafts, setDrafts] = useState({});
+  useEffect(() => setDrafts(Object.fromEntries(leagues.map(league => [league.id, { ...league }]))), [leagues]);
+  const update = (leagueId, field, value) => setDrafts(values => ({ ...values, [leagueId]: { ...values[leagueId], [field]: value } }));
+  return <section className="scoring-rules card"><span className="tag">STANDINGS RULES</span><h2>Points and tiebreakers</h2><p>Changes apply immediately to confirmed results. Wins must be worth at least draws, and draws at least losses.</p>{leagues.map(league => { const draft = drafts[league.id] ?? league; return <div className="scoring-rule-row" key={league.id}><b>{league.name}</b><label>Win<input type="number" min="0" max="10" value={draft.winPoints} onChange={event => update(league.id, 'winPoints', event.target.value)} /></label><label>Draw<input type="number" min="0" max="10" value={draft.drawPoints} onChange={event => update(league.id, 'drawPoints', event.target.value)} /></label><label>Loss<input type="number" min="0" max="10" value={draft.lossPoints} onChange={event => update(league.id, 'lossPoints', event.target.value)} /></label><label>Tiebreaker<select value={draft.tiebreaker} onChange={event => update(league.id, 'tiebreaker', Number(event.target.value))}><option value={0}>Goal difference, then goals for</option><option value={1}>Goals for, then goal difference</option></select></label><button className="secondary" onClick={() => onSave(draft)}>Save scoring</button></div>; })}</section>;
 }
 
 function LeagueCard({ league, allLeagues, isOwner, onMove, onSave, onSuccess, onError, reload }) {

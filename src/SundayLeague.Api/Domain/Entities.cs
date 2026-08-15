@@ -17,6 +17,10 @@ public sealed class League
     public int PromotionPlaces { get; set; }
     public int RelegationPlaces { get; set; }
     public int PlayoffPlaces { get; set; }
+    public int WinPoints { get; set; } = 3;
+    public int DrawPoints { get; set; } = 1;
+    public int LossPoints { get; set; }
+    public StandingTiebreaker Tiebreaker { get; set; } = StandingTiebreaker.GoalDifferenceThenGoalsFor;
     public bool IsPublished { get; set; }
     public ICollection<Team> Teams { get; set; } = [];
 }
@@ -49,6 +53,7 @@ public sealed class LeagueMatch
 }
 
 public enum MatchStatus { Scheduled, Reported, Confirmed, Postponed, Cancelled }
+public enum StandingTiebreaker { GoalDifferenceThenGoalsFor, GoalsForThenGoalDifference }
 public enum BoardRole { Owner, CompetitionAdmin, ResultsEditor, Viewer }
 
 public sealed class BoardMembership

@@ -36,6 +36,38 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
     }
 
     [Fact]
+    public async Task Standings_apply_configured_points_and_tiebreaker_order()
+    {
+        const string slug = "rules-test-division";
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
+            var league = new League { Slug = slug, Name = "Rules Test Division", Tier = 99, IsPublished = true, WinPoints = 1, DrawPoints = 1, LossPoints = 0, Tiebreaker = StandingTiebreaker.GoalDifferenceThenGoalsFor };
+            var teams = new[] { "Alpha FC", "Bravo FC", "Charlie FC", "Delta FC" }.Select((name, index) => new Team { League = league, Name = name, ShortName = $"R{index}" }).ToArray();
+            db.Leagues.Add(league);
+            db.Teams.AddRange(teams);
+            db.Matches.AddRange(
+                new LeagueMatch { League = league, RoundNumber = 1, Kickoff = DateTimeOffset.UtcNow, HomeTeam = teams[0], AwayTeam = teams[1], HomeScore = 1, AwayScore = 0, Status = MatchStatus.Confirmed },
+                new LeagueMatch { League = league, RoundNumber = 1, Kickoff = DateTimeOffset.UtcNow, HomeTeam = teams[2], AwayTeam = teams[3], HomeScore = 2, AwayScore = 2, Status = MatchStatus.Confirmed });
+            await db.SaveChangesAsync();
+        }
+
+        var goalDifferenceFirst = await _client.GetFromJsonAsync<List<StandingRow>>($"/api/public/leagues/{slug}/standings");
+        Assert.Equal("Alpha FC", goalDifferenceFirst![0].TeamName);
+        Assert.Equal(1, goalDifferenceFirst[0].Points);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var league = await scope.ServiceProvider.GetRequiredService<LeagueDbContext>().Leagues.SingleAsync(item => item.Slug == slug);
+            league.Tiebreaker = StandingTiebreaker.GoalsForThenGoalDifference;
+            await scope.ServiceProvider.GetRequiredService<LeagueDbContext>().SaveChangesAsync();
+        }
+        var goalsForFirst = await _client.GetFromJsonAsync<List<StandingRow>>($"/api/public/leagues/{slug}/standings");
+
+        Assert.Equal("Charlie FC", goalsForFirst![0].TeamName);
+    }
+
+    [Fact]
     public async Task Anonymous_users_cannot_change_a_result()
     {
         var fixture = await GetFixtureAsync();
@@ -175,7 +207,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
         var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-        var league = await db.Leagues.SingleAsync();
+        var league = await db.Leagues.OrderBy(item => item.Tier).FirstAsync();
         var user = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true, DisplayName = "Result Editor" };
         var result = await users.CreateAsync(user, "TestPassword!42");
         Assert.True(result.Succeeded);
@@ -189,7 +221,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
         var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-        var league = await db.Leagues.SingleAsync();
+        var league = await db.Leagues.OrderBy(item => item.Tier).FirstAsync();
         var user = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true, DisplayName = "Test Owner" };
         var result = await users.CreateAsync(user, "TestPassword!42");
         Assert.True(result.Succeeded);

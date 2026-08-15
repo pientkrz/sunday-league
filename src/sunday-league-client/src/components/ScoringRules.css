@@ -1,0 +1,54 @@
+.scoring-rules {
+  padding: 22px;
+}
+
+.scoring-rules h2 {
+  font-size: 22px;
+  margin-bottom: 6px;
+}
+
+.scoring-rules p {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+
+.scoring-rule-row {
+  display: grid;
+  grid-template-columns: minmax(125px, 1fr) repeat(3, 68px) minmax(180px, 1.4fr) auto;
+  gap: 10px;
+  align-items: end;
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+  font-size: 12px;
+}
+
+.scoring-rule-row label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.scoring-rule-row input,
+.scoring-rule-row select {
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--ink);
+  background: white;
+}
+
+@media (max-width: 900px) {
+  .scoring-rule-row {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  .scoring-rule-row b,
+  .scoring-rule-row label:nth-of-type(4),
+  .scoring-rule-row button {
+    grid-column: 1 / -1;
+  }
+}
