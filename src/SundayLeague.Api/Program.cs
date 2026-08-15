@@ -225,6 +225,16 @@ board.MapGet("/members", async (ClaimsPrincipal user, LeagueDbContext db, BoardA
         membership.League == null ? null : membership.League.Name, membership.Role)).ToListAsync();
     return Results.Ok(members);
 });
+board.MapGet("/audit-events", async (ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access) =>
+{
+    if (!await access.IsOwnerAsync(user)) return Results.Forbid();
+    var entries = (await db.AuditEvents.ToListAsync()).OrderByDescending(item => item.OccurredAt).Take(100).ToList();
+    var actorIds = entries.Where(item => item.ActorUserId is not null).Select(item => item.ActorUserId!).Distinct().ToList();
+    var actorNames = await db.Users.Where(account => actorIds.Contains(account.Id)).ToDictionaryAsync(account => account.Id, account => account.DisplayName);
+    var events = entries.Select(item => new AuditEventSummary(item.Id, item.OccurredAt, item.Action, item.EntityType, item.EntityId, item.Detail,
+        item.ActorUserId is not null && actorNames.TryGetValue(item.ActorUserId, out var name) ? name : null)).ToList();
+    return Results.Ok(events);
+});
 board.MapDelete("/members/{membershipId:guid}", async (Guid membershipId, ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access, AuditService audit) =>
 {
     if (!await access.IsOwnerAsync(user)) return Results.Forbid();
