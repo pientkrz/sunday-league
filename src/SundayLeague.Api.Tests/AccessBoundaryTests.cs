@@ -15,6 +15,15 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
     private readonly HttpClient _client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost"), HandleCookies = true });
 
     [Fact]
+    public async Task Startup_applies_the_initial_schema_migration()
+    {
+        using var scope = factory.Services.CreateScope();
+        var migrations = await scope.ServiceProvider.GetRequiredService<LeagueDbContext>().Database.GetAppliedMigrationsAsync();
+
+        Assert.Contains(migrations, migration => migration.EndsWith("InitialCreate", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Published_standings_are_available_without_an_account()
     {
         var response = await _client.GetAsync("/api/public/leagues/premier-division/standings");

@@ -113,7 +113,7 @@ app.UseAntiforgery();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
-    await db.Database.EnsureCreatedAsync();
+    await db.Database.MigrateAsync();
     await LeagueSeed.EnsureSeededAsync(db);
     await scope.ServiceProvider.GetRequiredService<InitialOwnerService>().EnsureCreatedAsync();
 }
