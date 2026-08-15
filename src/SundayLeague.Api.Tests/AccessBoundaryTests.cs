@@ -42,7 +42,8 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
-            var league = new League { Slug = slug, Name = "Rules Test Division", Tier = 99, IsPublished = true, WinPoints = 1, DrawPoints = 1, LossPoints = 0, Tiebreaker = StandingTiebreaker.GoalDifferenceThenGoalsFor };
+            var activeSeason = await db.Seasons.SingleAsync(season => season.Status == SeasonStatus.Active);
+            var league = new League { Slug = slug, Name = "Rules Test Division", Tier = 99, IsPublished = true, Season = activeSeason, WinPoints = 1, DrawPoints = 1, LossPoints = 0, Tiebreaker = StandingTiebreaker.GoalDifferenceThenGoalsFor };
             var teams = new[] { "Alpha FC", "Bravo FC", "Charlie FC", "Delta FC" }.Select((name, index) => new Team { League = league, Name = name, ShortName = $"R{index}" }).ToArray();
             db.Leagues.Add(league);
             db.Teams.AddRange(teams);
@@ -65,6 +66,22 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         var goalsForFirst = await _client.GetFromJsonAsync<List<StandingRow>>($"/api/public/leagues/{slug}/standings");
 
         Assert.Equal("Charlie FC", goalsForFirst![0].TeamName);
+    }
+
+    [Fact]
+    public async Task Owner_can_create_a_draft_season_but_cannot_activate_it_early()
+    {
+        await CreateOwnerAsync("season-owner@example.com");
+        await SignInAsync("season-owner@example.com", "TestPassword!42");
+        var create = await SendWithCsrfAsync(HttpMethod.Post, "/api/board/seasons", new CreateSeasonRequest("2027/28", new DateOnly(2027, 7, 1), new DateOnly(2028, 6, 30)));
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
+        var season = await db.Seasons.SingleAsync(item => item.Name == "2027/28");
+
+        var activate = await SendWithCsrfAsync(HttpMethod.Put, $"/api/board/seasons/{season.Id}", new UpdateSeasonRequest(season.Name, season.StartsOn, season.EndsOn, SeasonStatus.Active));
+
+        Assert.Equal(HttpStatusCode.Conflict, activate.StatusCode);
     }
 
     [Fact]

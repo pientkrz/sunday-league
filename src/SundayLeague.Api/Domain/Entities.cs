@@ -22,7 +22,19 @@ public sealed class League
     public int LossPoints { get; set; }
     public StandingTiebreaker Tiebreaker { get; set; } = StandingTiebreaker.GoalDifferenceThenGoalsFor;
     public bool IsPublished { get; set; }
+    public Guid? SeasonId { get; set; }
+    public Season? Season { get; set; }
     public ICollection<Team> Teams { get; set; } = [];
+}
+
+public sealed class Season
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Name { get; set; } = string.Empty;
+    public DateOnly StartsOn { get; set; }
+    public DateOnly EndsOn { get; set; }
+    public SeasonStatus Status { get; set; }
+    public ICollection<League> Leagues { get; set; } = [];
 }
 
 public sealed class Team
@@ -54,6 +66,7 @@ public sealed class LeagueMatch
 
 public enum MatchStatus { Scheduled, Reported, Confirmed, Postponed, Cancelled }
 public enum StandingTiebreaker { GoalDifferenceThenGoalsFor, GoalsForThenGoalDifference }
+public enum SeasonStatus { Draft, Active, Archived }
 public enum BoardRole { Owner, CompetitionAdmin, ResultsEditor, Viewer }
 
 public sealed class BoardMembership
