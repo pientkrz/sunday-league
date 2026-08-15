@@ -292,12 +292,45 @@ board.MapPut("/matches/{matchId:guid}/result", async (Guid matchId, UpdateResult
     if (match is null) return Results.NotFound();
     if (!await access.CanEditResultsAsync(user, match.LeagueId)) return Results.Forbid();
     if (match.Version != request.Version) return Results.Conflict(new { error = "This match has changed. Refresh and try again." });
+    if (match.Status == MatchStatus.Cancelled) return Results.Conflict(new { error = "A cancelled fixture cannot receive a result." });
     var oldResult = $"{match.HomeScore}-{match.AwayScore}";
     match.HomeScore = request.HomeScore;
     match.AwayScore = request.AwayScore;
     match.Status = MatchStatus.Confirmed;
     match.Version = Guid.NewGuid();
     await audit.RecordAsync(user, "match.result.updated", "Match", match.Id, $"{oldResult} => {match.HomeScore}-{match.AwayScore}");
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+board.MapPut("/matches/{matchId:guid}/kickoff", async (Guid matchId, UpdateFixtureKickoffRequest request, ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access, AuditService audit) =>
+{
+    var now = DateTimeOffset.UtcNow;
+    if (request.Kickoff < now.AddYears(-1) || request.Kickoff > now.AddYears(10))
+        return Results.BadRequest(new { error = "Choose a valid kick-off date and time." });
+    var match = await db.Matches.SingleOrDefaultAsync(item => item.Id == matchId);
+    if (match is null) return Results.NotFound();
+    if (!await access.CanConfigureAsync(user, match.LeagueId)) return Results.Forbid();
+    if (match.Version != request.Version) return Results.Conflict(new { error = "This match has changed. Refresh and try again." });
+    if (match.Status is MatchStatus.Confirmed or MatchStatus.Cancelled)
+        return Results.Conflict(new { error = "Only unplayed fixtures can be rescheduled." });
+    var oldKickoff = match.Kickoff;
+    match.Kickoff = request.Kickoff;
+    match.Version = Guid.NewGuid();
+    await audit.RecordAsync(user, "match.kickoff.updated", "Match", match.Id, $"{oldKickoff:O} => {match.Kickoff:O}");
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+board.MapPost("/matches/{matchId:guid}/cancel", async (Guid matchId, CancelFixtureRequest request, ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access, AuditService audit) =>
+{
+    var match = await db.Matches.SingleOrDefaultAsync(item => item.Id == matchId);
+    if (match is null) return Results.NotFound();
+    if (!await access.CanConfigureAsync(user, match.LeagueId)) return Results.Forbid();
+    if (match.Version != request.Version) return Results.Conflict(new { error = "This match has changed. Refresh and try again." });
+    if (match.Status is not (MatchStatus.Scheduled or MatchStatus.Postponed))
+        return Results.Conflict(new { error = "Only scheduled or postponed fixtures can be cancelled." });
+    match.Status = MatchStatus.Cancelled;
+    match.Version = Guid.NewGuid();
+    await audit.RecordAsync(user, "match.cancelled", "Match", match.Id, $"Round {match.RoundNumber} fixture cancelled.");
     await db.SaveChangesAsync();
     return Results.NoContent();
 });
