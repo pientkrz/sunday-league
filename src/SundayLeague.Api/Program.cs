@@ -323,7 +323,8 @@ board.MapPut("/matches/{matchId:guid}/result", async (Guid matchId, UpdateResult
     if (match is null) return Results.NotFound();
     if (!await access.CanEditResultsAsync(user, match.LeagueId)) return Results.Forbid();
     if (match.Version != request.Version) return Results.Conflict(new { error = "This match has changed. Refresh and try again." });
-    if (match.Status == MatchStatus.Cancelled) return Results.Conflict(new { error = "A cancelled fixture cannot receive a result." });
+    if (match.Status is MatchStatus.Cancelled or MatchStatus.Postponed)
+        return Results.Conflict(new { error = "Only scheduled or reported fixtures can receive a result." });
     var oldResult = $"{match.HomeScore}-{match.AwayScore}";
     match.HomeScore = request.HomeScore;
     match.AwayScore = request.AwayScore;
@@ -360,8 +361,23 @@ board.MapPut("/matches/{matchId:guid}/kickoff", async (Guid matchId, UpdateFixtu
         return Results.Conflict(new { error = "Only unplayed fixtures can be rescheduled." });
     var oldKickoff = match.Kickoff;
     match.Kickoff = request.Kickoff;
+    if (match.Status == MatchStatus.Postponed) match.Status = MatchStatus.Scheduled;
     match.Version = Guid.NewGuid();
     await audit.RecordAsync(user, "match.kickoff.updated", "Match", match.Id, $"{oldKickoff:O} => {match.Kickoff:O}");
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+board.MapPost("/matches/{matchId:guid}/postpone", async (Guid matchId, CancelFixtureRequest request, ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access, AuditService audit) =>
+{
+    var match = await db.Matches.SingleOrDefaultAsync(item => item.Id == matchId);
+    if (match is null) return Results.NotFound();
+    if (!await access.CanConfigureAsync(user, match.LeagueId)) return Results.Forbid();
+    if (match.Version != request.Version) return Results.Conflict(new { error = "This match has changed. Refresh and try again." });
+    if (match.Status != MatchStatus.Scheduled)
+        return Results.Conflict(new { error = "Only scheduled fixtures can be postponed." });
+    match.Status = MatchStatus.Postponed;
+    match.Version = Guid.NewGuid();
+    await audit.RecordAsync(user, "match.postponed", "Match", match.Id, $"Round {match.RoundNumber} fixture postponed.");
     await db.SaveChangesAsync();
     return Results.NoContent();
 });
