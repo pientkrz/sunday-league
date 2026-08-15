@@ -79,6 +79,7 @@ builder.Services.AddScoped<StandingsService>();
 builder.Services.AddScoped<InvitationService>();
 builder.Services.AddScoped<AuditService>();
 builder.Services.AddScoped<SeasonService>();
+builder.Services.AddScoped<SeasonRolloverService>();
 builder.Services.AddScoped<InitialOwnerService>();
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
     .WithOrigins(builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? ["http://localhost:5173"])
@@ -217,6 +218,12 @@ board.MapPut("/seasons/{seasonId:guid}", async (Guid seasonId, UpdateSeasonReque
     await db.SaveChangesAsync();
     return Results.NoContent();
 });
+board.MapPost("/seasons/{sourceSeasonId:guid}/rollover/{destinationSeasonId:guid}", async (Guid sourceSeasonId, Guid destinationSeasonId, ClaimsPrincipal user, BoardAuthorizationService access, SeasonRolloverService rollover, AuditService audit) =>
+{
+    if (!await access.IsOwnerAsync(user)) return Results.Forbid();
+    var result = await rollover.CreateAsync(user, sourceSeasonId, destinationSeasonId, audit);
+    return result.Success ? Results.Ok(result.Value) : Results.Conflict(new { error = result.Error });
+});
 board.MapGet("/members", async (ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access) =>
 {
     if (!await access.IsOwnerAsync(user)) return Results.Forbid();
@@ -252,9 +259,9 @@ board.MapPost("/leagues", async (CreateLeagueRequest request, ClaimsPrincipal us
     var slug = LeagueSlug.From(request.Name);
     if (string.IsNullOrWhiteSpace(slug) || request.Name.Length > 120 || request.PromotionPlaces < 0 || request.RelegationPlaces < 0 || request.PlayoffPlaces < 0 || !LeagueRules.HasValidScoring(request.WinPoints, request.DrawPoints, request.LossPoints, request.Tiebreaker))
         return Results.BadRequest(new { error = "Provide a valid league configuration." });
-    if (await db.Leagues.AnyAsync(league => league.Slug == slug)) return Results.Conflict(new { error = "A league with this name already exists." });
-    var tier = (await db.Leagues.Select(league => (int?)league.Tier).MaxAsync() ?? 0) + 1;
     var activeSeason = await db.Seasons.SingleAsync(season => season.Status == SeasonStatus.Active);
+    if (await db.Leagues.AnyAsync(league => league.Slug == slug && league.SeasonId == activeSeason.Id)) return Results.Conflict(new { error = "A league with this name already exists in the active season." });
+    var tier = (await db.Leagues.Where(league => league.SeasonId == activeSeason.Id).Select(league => (int?)league.Tier).MaxAsync() ?? 0) + 1;
     var league = new League { Name = request.Name.Trim(), Slug = slug, Tier = tier, PromotionPlaces = request.PromotionPlaces, RelegationPlaces = request.RelegationPlaces, PlayoffPlaces = request.PlayoffPlaces, WinPoints = request.WinPoints, DrawPoints = request.DrawPoints, LossPoints = request.LossPoints, Tiebreaker = request.Tiebreaker, IsPublished = request.IsPublished, SeasonId = activeSeason.Id };
     db.Leagues.Add(league);
     await audit.RecordAsync(user, "league.created", "League", league.Id, league.Name);

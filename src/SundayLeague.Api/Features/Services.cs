@@ -97,6 +97,73 @@ public sealed class SeasonService(LeagueDbContext db)
     public Task<bool> HasUnplayedFixturesAsync(Guid seasonId) => db.Matches.AnyAsync(match => match.League.SeasonId == seasonId && (match.Status == MatchStatus.Scheduled || match.Status == MatchStatus.Reported || match.Status == MatchStatus.Postponed));
 }
 
+public sealed class SeasonRolloverService(LeagueDbContext db, StandingsService standings, SeasonService seasons)
+{
+    public async Task<ServiceResult<SeasonRolloverSummary>> CreateAsync(ClaimsPrincipal actor, Guid sourceSeasonId, Guid destinationSeasonId, AuditService audit)
+    {
+        if (sourceSeasonId == destinationSeasonId) return ServiceResult<SeasonRolloverSummary>.Invalid("Choose a different draft season for the rollover.");
+        var source = await db.Seasons.SingleOrDefaultAsync(season => season.Id == sourceSeasonId);
+        var destination = await db.Seasons.SingleOrDefaultAsync(season => season.Id == destinationSeasonId);
+        if (source is null || destination is null) return ServiceResult<SeasonRolloverSummary>.Invalid("The source or destination season was not found.");
+        if (source.Status != SeasonStatus.Active || destination.Status != SeasonStatus.Draft || destination.StartsOn <= source.EndsOn)
+            return ServiceResult<SeasonRolloverSummary>.Invalid("Roll over an active completed season into a later draft season.");
+        if (await seasons.HasUnplayedFixturesAsync(source.Id)) return ServiceResult<SeasonRolloverSummary>.Invalid("All source fixtures must be confirmed or cancelled before rollover.");
+        if (await db.Leagues.AnyAsync(league => league.SeasonId == destination.Id)) return ServiceResult<SeasonRolloverSummary>.Invalid("The draft season already contains leagues.");
+
+        var sourceLeagues = await db.Leagues.Include(league => league.Teams).Where(league => league.SeasonId == source.Id).OrderBy(league => league.Tier).ToListAsync();
+        if (sourceLeagues.Count == 0) return ServiceResult<SeasonRolloverSummary>.Invalid("The source season has no leagues to roll over.");
+        var rankings = new Dictionary<Guid, IReadOnlyList<StandingRow>>();
+        foreach (var league in sourceLeagues)
+        {
+            var table = await standings.GetAsync(league.Id);
+            if (league.PromotionPlaces + league.RelegationPlaces > table.Count)
+                return ServiceResult<SeasonRolloverSummary>.Invalid($"{league.Name} has overlapping promotion and relegation places.");
+            rankings[league.Id] = table;
+        }
+
+        var teamDestinations = sourceLeagues.SelectMany(league => league.Teams).ToDictionary(team => team.Id, team => team.LeagueId);
+        var promoted = 0;
+        var relegated = 0;
+        for (var index = 0; index < sourceLeagues.Count; index++)
+        {
+            var league = sourceLeagues[index];
+            var table = rankings[league.Id];
+            if (index > 0)
+            {
+                foreach (var team in table.Take(league.PromotionPlaces)) teamDestinations[team.TeamId] = sourceLeagues[index - 1].Id;
+                promoted += Math.Min(league.PromotionPlaces, table.Count);
+            }
+            if (index < sourceLeagues.Count - 1)
+            {
+                foreach (var team in table.TakeLast(league.RelegationPlaces)) teamDestinations[team.TeamId] = sourceLeagues[index + 1].Id;
+                relegated += Math.Min(league.RelegationPlaces, table.Count);
+            }
+        }
+
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var leagueMap = sourceLeagues.ToDictionary(league => league.Id, league => new League
+        {
+            SeasonId = destination.Id, Slug = league.Slug, Name = league.Name, Tier = league.Tier, PromotionPlaces = league.PromotionPlaces,
+            RelegationPlaces = league.RelegationPlaces, PlayoffPlaces = league.PlayoffPlaces, WinPoints = league.WinPoints, DrawPoints = league.DrawPoints,
+            LossPoints = league.LossPoints, Tiebreaker = league.Tiebreaker, IsPublished = false
+        });
+        db.Leagues.AddRange(leagueMap.Values);
+        var teams = sourceLeagues.SelectMany(league => league.Teams).Select(team => new Team
+        {
+            League = leagueMap[teamDestinations[team.Id]], Name = team.Name, ShortName = team.ShortName, CrestUrl = team.CrestUrl
+        }).ToList();
+        db.Teams.AddRange(teams);
+        var sourceLeagueIds = sourceLeagues.Select(league => league.Id).ToList();
+        var scopedMemberships = await db.BoardMemberships.Where(membership => membership.LeagueId != null && sourceLeagueIds.Contains(membership.LeagueId.Value)).ToListAsync();
+        foreach (var membership in scopedMemberships)
+            db.BoardMemberships.Add(new BoardMembership { UserId = membership.UserId, LeagueId = leagueMap[membership.LeagueId!.Value].Id, Role = membership.Role });
+        await audit.RecordAsync(actor, "season.rolled_over", "Season", destination.Id, $"{source.Name} => {destination.Name}; {promoted} promoted, {relegated} relegated.");
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+        return ServiceResult<SeasonRolloverSummary>.Ok(new SeasonRolloverSummary(source.Id, destination.Id, leagueMap.Count, teams.Count, promoted, relegated));
+    }
+}
+
 /// <summary>Creates the first Owner only when credentials are supplied through user-secrets or environment variables.</summary>
 public sealed class InitialOwnerService(LeagueDbContext db, UserManager<ApplicationUser> users, IConfiguration configuration)
 {

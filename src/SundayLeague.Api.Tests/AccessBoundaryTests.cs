@@ -85,6 +85,57 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
     }
 
     [Fact]
+    public async Task Owner_can_roll_completed_standings_into_a_draft_season_without_changing_history()
+    {
+        Season originalActive;
+        Season source;
+        Season destination;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
+            originalActive = await db.Seasons.SingleAsync(item => item.Status == SeasonStatus.Active);
+            originalActive.Status = SeasonStatus.Draft;
+            source = new Season { Name = $"Rollover source {Guid.NewGuid():N}", StartsOn = new DateOnly(2027, 7, 1), EndsOn = new DateOnly(2028, 6, 30), Status = SeasonStatus.Active };
+            destination = new Season { Name = $"Rollover destination {Guid.NewGuid():N}", StartsOn = new DateOnly(2028, 7, 1), EndsOn = new DateOnly(2029, 6, 30), Status = SeasonStatus.Draft };
+            var premier = new League { Season = source, Slug = "rollover-premier", Name = "Rollover Premier", Tier = 1, RelegationPlaces = 1, IsPublished = true };
+            var divisionOne = new League { Season = source, Slug = "rollover-division-one", Name = "Rollover Division One", Tier = 2, PromotionPlaces = 1, IsPublished = true };
+            var alpha = new Team { League = premier, Name = "Rollover Alpha", ShortName = "RA" };
+            var bravo = new Team { League = premier, Name = "Rollover Bravo", ShortName = "RB" };
+            var charlie = new Team { League = divisionOne, Name = "Rollover Charlie", ShortName = "RC" };
+            var delta = new Team { League = divisionOne, Name = "Rollover Delta", ShortName = "RD" };
+            db.Seasons.AddRange(source, destination);
+            db.Leagues.AddRange(premier, divisionOne);
+            db.Teams.AddRange(alpha, bravo, charlie, delta);
+            db.Matches.AddRange(
+                new LeagueMatch { League = premier, RoundNumber = 1, Kickoff = DateTimeOffset.UtcNow, HomeTeam = alpha, AwayTeam = bravo, HomeScore = 2, AwayScore = 0, Status = MatchStatus.Confirmed },
+                new LeagueMatch { League = divisionOne, RoundNumber = 1, Kickoff = DateTimeOffset.UtcNow, HomeTeam = charlie, AwayTeam = delta, HomeScore = 1, AwayScore = 0, Status = MatchStatus.Confirmed });
+            await db.SaveChangesAsync();
+        }
+        await CreateOwnerAsync("rollover-owner@example.com");
+        await SignInAsync("rollover-owner@example.com", "TestPassword!42");
+
+        var response = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/seasons/{source.Id}/rollover/{destination.Id}", new { });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using (var verification = factory.Services.CreateScope())
+        {
+            var db = verification.ServiceProvider.GetRequiredService<LeagueDbContext>();
+            var clonedLeagues = await db.Leagues.Include(item => item.Teams).Where(item => item.SeasonId == destination.Id).OrderBy(item => item.Tier).ToListAsync();
+            Assert.Equal(2, clonedLeagues.Count);
+            Assert.Equal(new[] { "Rollover Alpha", "Rollover Charlie" }, clonedLeagues[0].Teams.OrderBy(item => item.Name).Select(item => item.Name));
+            Assert.Equal(new[] { "Rollover Bravo", "Rollover Delta" }, clonedLeagues[1].Teams.OrderBy(item => item.Name).Select(item => item.Name));
+            Assert.All(clonedLeagues, item => Assert.False(item.IsPublished));
+            Assert.Equal(2, await db.Leagues.CountAsync(item => item.SeasonId == source.Id));
+            Assert.True(await db.AuditEvents.AnyAsync(item => item.Action == "season.rolled_over" && item.EntityId == destination.Id));
+            originalActive = await db.Seasons.SingleAsync(item => item.Id == originalActive.Id);
+            source = await db.Seasons.SingleAsync(item => item.Id == source.Id);
+            originalActive.Status = SeasonStatus.Active;
+            source.Status = SeasonStatus.Archived;
+            await db.SaveChangesAsync();
+        }
+    }
+
+    [Fact]
     public async Task Anonymous_users_cannot_change_a_result()
     {
         var fixture = await GetFixtureAsync();
@@ -107,6 +158,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         var crestResponse = await SendCrestWithCsrfAsync(await GetTeamIdAsync(league.Id), "not-a-crest");
         var memberListResponse = await _client.GetAsync("/api/board/members");
         var auditListResponse = await _client.GetAsync("/api/board/audit-events");
+        var rolloverResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/seasons/{Guid.NewGuid()}/rollover/{Guid.NewGuid()}", new { });
         var rescheduleResponse = await SendWithCsrfAsync(HttpMethod.Put, $"/api/board/matches/{fixture.Id}/kickoff", new UpdateFixtureKickoffRequest(DateTimeOffset.UtcNow.AddDays(8), fixture.Version));
         var postponeResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/matches/{fixture.Id}/postpone", new CancelFixtureRequest(fixture.Version));
         var cancelResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/matches/{fixture.Id}/cancel", new CancelFixtureRequest(fixture.Version));
@@ -118,6 +170,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         Assert.Equal(HttpStatusCode.Forbidden, crestResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, memberListResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, auditListResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, rolloverResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, rescheduleResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, postponeResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, cancelResponse.StatusCode);
