@@ -9,6 +9,8 @@ public sealed record PublicFixture(Guid Id, int RoundNumber, DateTimeOffset Kick
 public sealed record LoginRequest(string Email, string Password);
 public sealed record RegisterRequest(string Email, string DisplayName, string Password, string InvitationToken);
 public sealed record UpdateResultRequest(int HomeScore, int AwayScore, Guid Version);
+public sealed record UpdateFixtureKickoffRequest(DateTimeOffset Kickoff, Guid Version);
+public sealed record CancelFixtureRequest(Guid Version);
 public sealed record CreateRoundRequest(DateTimeOffset Kickoff);
 public sealed record CreateInvitationRequest(string Email, BoardRole Role, Guid? LeagueId);
 public sealed record InvitationResponse(string Email, BoardRole Role, Guid? LeagueId, string? DevelopmentToken);
