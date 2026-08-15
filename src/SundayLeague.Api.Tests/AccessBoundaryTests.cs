@@ -116,6 +116,9 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         Assert.Equal(HttpStatusCode.Forbidden, memberListResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, rescheduleResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, cancelResponse.StatusCode);
+        using var verification = factory.Services.CreateScope();
+        var reported = await verification.ServiceProvider.GetRequiredService<LeagueDbContext>().Matches.SingleAsync(match => match.Id == fixture.Id);
+        Assert.Equal(MatchStatus.Reported, reported.Status);
     }
 
     [Fact]
