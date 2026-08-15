@@ -107,6 +107,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         var crestResponse = await SendCrestWithCsrfAsync(await GetTeamIdAsync(league.Id), "not-a-crest");
         var memberListResponse = await _client.GetAsync("/api/board/members");
         var rescheduleResponse = await SendWithCsrfAsync(HttpMethod.Put, $"/api/board/matches/{fixture.Id}/kickoff", new UpdateFixtureKickoffRequest(DateTimeOffset.UtcNow.AddDays(8), fixture.Version));
+        var postponeResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/matches/{fixture.Id}/postpone", new CancelFixtureRequest(fixture.Version));
         var cancelResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/matches/{fixture.Id}/cancel", new CancelFixtureRequest(fixture.Version));
 
         Assert.Equal(HttpStatusCode.NoContent, resultResponse.StatusCode);
@@ -115,6 +116,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         Assert.Equal(HttpStatusCode.Forbidden, crestResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, memberListResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, rescheduleResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, postponeResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, cancelResponse.StatusCode);
         using var verification = factory.Services.CreateScope();
         var reported = await verification.ServiceProvider.GetRequiredService<LeagueDbContext>().Matches.SingleAsync(match => match.Id == fixture.Id);
@@ -197,18 +199,26 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
     }
 
     [Fact]
-    public async Task Owner_can_reschedule_and_cancel_an_unplayed_fixture_with_an_audit_record()
+    public async Task Owner_can_postpone_reschedule_and_cancel_an_unplayed_fixture_with_audit_records()
     {
         var league = await CreateOwnerAsync("fixture-owner@example.com");
         await SignInAsync("fixture-owner@example.com", "TestPassword!42");
         var createRound = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/leagues/{league.Id}/rounds/random", new CreateRoundRequest(DateTimeOffset.UtcNow.AddDays(7)));
         Assert.Equal(HttpStatusCode.Created, createRound.StatusCode);
         var scheduled = await GetScheduledFixtureAsync(league.Id);
+        var postponement = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/matches/{scheduled.Id}/postpone", new CancelFixtureRequest(scheduled.Version));
+        Assert.Equal(HttpStatusCode.NoContent, postponement.StatusCode);
+        var postponed = await GetFixtureByIdAsync(scheduled.Id);
+        var resultWhilePostponed = await SendWithCsrfAsync(HttpMethod.Put, $"/api/board/matches/{scheduled.Id}/result", new UpdateResultRequest(1, 0, postponed.Version));
+        Assert.Equal(MatchStatus.Postponed, postponed.Status);
+        Assert.Equal(HttpStatusCode.Conflict, resultWhilePostponed.StatusCode);
+
         var newKickoff = DateTimeOffset.UtcNow.AddDays(9);
 
-        var reschedule = await SendWithCsrfAsync(HttpMethod.Put, $"/api/board/matches/{scheduled.Id}/kickoff", new UpdateFixtureKickoffRequest(newKickoff, scheduled.Version));
+        var reschedule = await SendWithCsrfAsync(HttpMethod.Put, $"/api/board/matches/{scheduled.Id}/kickoff", new UpdateFixtureKickoffRequest(newKickoff, postponed.Version));
         Assert.Equal(HttpStatusCode.NoContent, reschedule.StatusCode);
-        var rescheduled = await GetScheduledFixtureAsync(league.Id);
+        var rescheduled = await GetFixtureByIdAsync(scheduled.Id);
+        Assert.Equal(MatchStatus.Scheduled, rescheduled.Status);
 
         var cancellation = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/matches/{scheduled.Id}/cancel", new CancelFixtureRequest(rescheduled.Version));
         Assert.Equal(HttpStatusCode.NoContent, cancellation.StatusCode);
@@ -219,6 +229,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         Assert.Equal(HttpStatusCode.Conflict, resultAfterCancellation.StatusCode);
         using var scope = factory.Services.CreateScope();
         var auditEvents = await scope.ServiceProvider.GetRequiredService<LeagueDbContext>().AuditEvents.Where(item => item.EntityId == scheduled.Id).Select(item => item.Action).ToListAsync();
+        Assert.Contains("match.postponed", auditEvents);
         Assert.Contains("match.kickoff.updated", auditEvents);
         Assert.Contains("match.cancelled", auditEvents);
     }

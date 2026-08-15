@@ -54,7 +54,7 @@ export default function App() {
     if (draft.homeScore === '' || draft.awayScore === '') { setError('Enter both scores before saving.'); return; }
     try {
       await boardApi(`/api/board/matches/${fixture.id}/result`, 'PUT', { homeScore: Number(draft.homeScore), awayScore: Number(draft.awayScore), version: fixture.version });
-      setNotice('Result saved. Standings have been recalculated.');
+      setNotice('Result reported. Awaiting confirmation.');
       await loadLeague();
     } catch (requestError) { setError(requestError.message); }
   };
@@ -72,6 +72,13 @@ export default function App() {
       await loadLeague();
     } catch (requestError) { setError(requestError.message); }
   };
+  const postponeFixture = async fixture => {
+    try {
+      await boardApi(`/api/board/matches/${fixture.id}/postpone`, 'POST', { version: fixture.version });
+      setNotice('Fixture postponed. It remains visible until rescheduled or cancelled.');
+      await loadLeague();
+    } catch (requestError) { setError(requestError.message); }
+  };
   const confirmResult = async fixture => {
     try {
       await boardApi(`/api/board/matches/${fixture.id}/confirm`, 'POST', { homeScore: fixture.homeScore, awayScore: fixture.awayScore, version: fixture.version });
@@ -85,7 +92,7 @@ export default function App() {
     {(page === 'dashboard' || page === 'fixtures') && <div className="league-tabs">{leagues.map(league => <button key={league.id} onClick={() => setSelectedSlug(league.slug)} className={selectedSlug === league.slug ? 'selected' : ''}>{league.name}</button>)}</div>}
     {loading && <p className="loading">Loading public league data…</p>}
     {!loading && page === 'dashboard' && currentLeague && <Dashboard league={currentLeague} standings={standings} fixtures={fixtures} statusFor={statusFor} session={session} goFixtures={() => setPage('fixtures')} />}
-    {!loading && page === 'fixtures' && <ManagedFixtures league={currentLeague} fixtures={fixtures} drafts={drafts} setDrafts={setDrafts} canEdit={canEdit} canConfigure={canConfigure} saveResult={saveResult} confirmResult={confirmResult} updateFixture={updateFixture} cancelFixture={cancelFixture} session={session} goBoard={() => setPage('board')} />}
+    {!loading && page === 'fixtures' && <ManagedFixtures league={currentLeague} fixtures={fixtures} drafts={drafts} setDrafts={setDrafts} canEdit={canEdit} canConfigure={canConfigure} saveResult={saveResult} confirmResult={confirmResult} updateFixture={updateFixture} postponeFixture={postponeFixture} cancelFixture={cancelFixture} session={session} goBoard={() => setPage('board')} />}
     {page === 'board' && !session && <BoardAccess onAuthenticated={async () => { await loadSession(); setNotice('Signed in successfully.'); }} />}
     {page === 'board' && session && <BoardHome session={session} leagues={leagues} onSuccess={setNotice} onError={setError} />}
   </main></div>;
@@ -97,11 +104,11 @@ function Dashboard({ league, standings, fixtures, statusFor, session, goFixtures
 }
 
 function Fixtures({ league, fixtures, drafts, setDrafts, canEdit, saveResult, session, goBoard }) {
-  return <section className="fixtures-page"><div className="toolbar"><div><span className="tag">PUBLIC SCHEDULE</span><h2>{league?.name}</h2></div>{!session && <button className="secondary" onClick={goBoard}>Board sign in</button>}</div>{[...new Set(fixtures.map(fixture => fixture.roundNumber))].map(round => <div className="round card" key={round}><div className="round-head"><h3>Round {round}</h3><span>{fixtures.some(fixture => fixture.roundNumber === round && fixture.homeScore === null) ? 'Upcoming' : 'Completed'}</span></div>{fixtures.filter(fixture => fixture.roundNumber === round).map((fixture, index) => { const draft = drafts[fixture.id] ?? { homeScore: fixture.homeScore ?? '', awayScore: fixture.awayScore ?? '' }; return <div className="fixture" key={fixture.id}><span className="fixture-date">{formatDate(fixture.kickoff)}</span><div className="fixture-team home">{fixture.homeTeam}<TeamMark name={fixture.homeTeam} index={index} small /></div><div className="score-input"><input aria-label={`${fixture.homeTeam} score`} value={draft.homeScore} disabled={!canEdit} onChange={event => setDrafts(values => ({ ...values, [fixture.id]: { ...draft, homeScore: event.target.value } }))} placeholder="–" /><b>:</b><input aria-label={`${fixture.awayTeam} score`} value={draft.awayScore} disabled={!canEdit} onChange={event => setDrafts(values => ({ ...values, [fixture.id]: { ...draft, awayScore: event.target.value } }))} placeholder="–" />{canEdit && <button className="save-score" onClick={() => saveResult(fixture)}>Save</button>}</div><div className="fixture-team"><TeamMark name={fixture.awayTeam} index={index + 1} small />{fixture.awayTeam}</div></div>; })}</div>)}</section>;
+  return <section className="fixtures-page"><div className="toolbar"><div><span className="tag">PUBLIC SCHEDULE</span><h2>{league?.name}</h2></div>{!session && <button className="secondary" onClick={goBoard}>Board sign in</button>}</div>{[...new Set(fixtures.map(fixture => fixture.roundNumber))].map(round => <div className="round card" key={round}><div className="round-head"><h3>Round {round}</h3><span>{fixtures.some(fixture => fixture.roundNumber === round && fixture.homeScore === null) ? 'Upcoming' : 'Completed'}</span></div>{fixtures.filter(fixture => fixture.roundNumber === round).map((fixture, index) => { const draft = drafts[fixture.id] ?? { homeScore: fixture.homeScore ?? '', awayScore: fixture.awayScore ?? '' }; const canEditFixture = canEdit && fixture.status !== 'Postponed' && fixture.status !== 'Cancelled'; return <div className="fixture" key={fixture.id}><span className="fixture-date">{formatDate(fixture.kickoff)}<small className={`fixture-status ${fixture.status.toLowerCase()}`}>{fixture.status}</small></span><div className="fixture-team home">{fixture.homeTeam}<TeamMark name={fixture.homeTeam} index={index} small /></div><div className="score-input"><input aria-label={`${fixture.homeTeam} score`} value={draft.homeScore} disabled={!canEditFixture} onChange={event => setDrafts(values => ({ ...values, [fixture.id]: { ...draft, homeScore: event.target.value } }))} placeholder="–" /><b>:</b><input aria-label={`${fixture.awayTeam} score`} value={draft.awayScore} disabled={!canEditFixture} onChange={event => setDrafts(values => ({ ...values, [fixture.id]: { ...draft, awayScore: event.target.value } }))} placeholder="–" />{canEditFixture && <button className="save-score" onClick={() => saveResult(fixture)}>Save</button>}</div><div className="fixture-team"><TeamMark name={fixture.awayTeam} index={index + 1} small />{fixture.awayTeam}</div></div>; })}</div>)}</section>;
 }
 
-function ManagedFixtures({ canConfigure, updateFixture, cancelFixture, confirmResult, ...props }) {
-  return <><Fixtures {...props} />{canConfigure && <><ResultApproval fixtures={props.fixtures} confirmResult={confirmResult} /><FixtureManagement fixtures={props.fixtures} updateFixture={updateFixture} cancelFixture={cancelFixture} /></>}</>;
+function ManagedFixtures({ canConfigure, updateFixture, postponeFixture, cancelFixture, confirmResult, ...props }) {
+  return <><Fixtures {...props} />{canConfigure && <><ResultApproval fixtures={props.fixtures} confirmResult={confirmResult} /><FixtureManagement fixtures={props.fixtures} updateFixture={updateFixture} postponeFixture={postponeFixture} cancelFixture={cancelFixture} /></>}</>;
 }
 
 function ResultApproval({ fixtures, confirmResult }) {
@@ -110,12 +117,12 @@ function ResultApproval({ fixtures, confirmResult }) {
   return <section className="fixture-management card"><span className="tag">RESULT APPROVAL</span><h3>Reported results</h3>{reported.map(fixture => <div className="fixture-admin-row" key={fixture.id}><b>R{fixture.roundNumber}</b><span>{fixture.homeTeam} {fixture.homeScore} – {fixture.awayScore} {fixture.awayTeam}</span><button className="primary" onClick={() => confirmResult(fixture)}>Confirm result</button></div>)}</section>;
 }
 
-function FixtureManagement({ fixtures, updateFixture, cancelFixture }) {
+function FixtureManagement({ fixtures, updateFixture, postponeFixture, cancelFixture }) {
   const [kickoffs, setKickoffs] = useState({});
   useEffect(() => setKickoffs(Object.fromEntries(fixtures.map(fixture => [fixture.id, toLocalDateTime(fixture.kickoff)]))), [fixtures]);
   const editableFixtures = fixtures.filter(fixture => ['Scheduled', 'Postponed'].includes(fixture.status));
   if (!editableFixtures.length) return null;
-  return <section className="fixture-management card"><div><span className="tag">LEAGUE ADMINISTRATION</span><h3>Manage upcoming fixtures</h3><p>Reschedule or cancel unplayed fixtures. Cancellations stay visible in the schedule.</p></div>{editableFixtures.map(fixture => <form className="fixture-admin-row" key={fixture.id} onSubmit={event => { event.preventDefault(); updateFixture(fixture, kickoffs[fixture.id]); }}><b>R{fixture.roundNumber}</b><span>{fixture.homeTeam} vs {fixture.awayTeam}</span><input aria-label={`Kick-off for ${fixture.homeTeam} versus ${fixture.awayTeam}`} type="datetime-local" value={kickoffs[fixture.id] ?? ''} onChange={event => setKickoffs(values => ({ ...values, [fixture.id]: event.target.value }))} required /><button className="secondary">Save time</button><button type="button" className="danger-button" onClick={() => cancelFixture(fixture)}>Cancel fixture</button></form>)}</section>;
+  return <section className="fixture-management card"><div><span className="tag">LEAGUE ADMINISTRATION</span><h3>Manage upcoming fixtures</h3><p>Postpone, reschedule, or cancel unplayed fixtures. These changes remain visible in the public schedule.</p></div>{editableFixtures.map(fixture => <form className="fixture-admin-row" key={fixture.id} onSubmit={event => { event.preventDefault(); updateFixture(fixture, kickoffs[fixture.id]); }}><b>R{fixture.roundNumber}</b><span>{fixture.homeTeam} vs {fixture.awayTeam}{fixture.status === 'Postponed' && ' (postponed)'}</span><input aria-label={`Kick-off for ${fixture.homeTeam} versus ${fixture.awayTeam}`} type="datetime-local" value={kickoffs[fixture.id] ?? ''} onChange={event => setKickoffs(values => ({ ...values, [fixture.id]: event.target.value }))} required /><button className="secondary">{fixture.status === 'Postponed' ? 'Reschedule' : 'Save time'}</button>{fixture.status === 'Scheduled' && <button type="button" className="secondary" onClick={() => postponeFixture(fixture)}>Postpone</button>}<button type="button" className="danger-button" onClick={() => cancelFixture(fixture)}>Cancel fixture</button></form>)}</section>;
 }
 
 function BoardHome({ session, leagues, onSuccess, onError }) {
