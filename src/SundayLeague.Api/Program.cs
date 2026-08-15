@@ -84,12 +84,19 @@ builder.Services.AddScoped<InitialOwnerService>();
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
     .WithOrigins(builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? ["http://localhost:5173"])
     .AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
-builder.Services.AddRateLimiter(options => options.AddFixedWindowLimiter("public", limiter =>
+builder.Services.AddRateLimiter(options =>
 {
-    limiter.PermitLimit = 120;
-    limiter.Window = TimeSpan.FromMinutes(1);
-    limiter.QueueLimit = 0;
-}));
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddFixedWindowLimiter("public", limiter =>
+    {
+        limiter.PermitLimit = 120;
+        limiter.Window = TimeSpan.FromMinutes(1);
+        limiter.QueueLimit = 0;
+    });
+    options.AddPolicy("authentication", context => RateLimitPartition.GetSlidingWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new SlidingWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), SegmentsPerWindow = 4, QueueLimit = 0, AutoReplenishment = true }));
+});
 
 var app = builder.Build();
 app.UseExceptionHandler(exceptionApp => exceptionApp.Run(async context =>
@@ -97,12 +104,16 @@ app.UseExceptionHandler(exceptionApp => exceptionApp.Run(async context =>
     context.Response.StatusCode = StatusCodes.Status500InternalServerError;
     await context.Response.WriteAsJsonAsync(new { error = "An unexpected error occurred." });
 }));
+if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Testing")) app.UseHsts();
 app.UseHttpsRedirection();
 app.Use(async (context, next) =>
 {
     context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
     context.Response.Headers.Append("X-Frame-Options", "DENY");
     context.Response.Headers.Append("Referrer-Policy", "strict-origin-when-cross-origin");
+    context.Response.Headers.Append("Content-Security-Policy", "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'");
+    context.Response.Headers.Append("Cross-Origin-Opener-Policy", "same-origin");
+    context.Response.Headers.Append("Permissions-Policy", "camera=(), geolocation=(), microphone=()");
     await next();
 });
 app.UseRateLimiter();
@@ -120,6 +131,13 @@ using (var scope = app.Services.CreateScope())
     await LeagueSeed.EnsureSeededAsync(db);
     await scope.ServiceProvider.GetRequiredService<InitialOwnerService>().EnsureCreatedAsync();
 }
+
+app.MapGet("/health/live", () => Results.Ok(new { status = "healthy" }));
+app.MapGet("/health/ready", async (LeagueDbContext db) =>
+{
+    try { return await db.Database.CanConnectAsync() ? Results.Ok(new { status = "ready" }) : Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
+    catch { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
+});
 
 var publicApi = app.MapGroup("/api/public").RequireRateLimiting("public");
 publicApi.MapGet("/leagues", async (LeagueDbContext db) =>
@@ -147,13 +165,13 @@ auth.MapPost("/login", async (LoginRequest request, SignInManager<ApplicationUse
     if (user is null) return Results.Unauthorized();
     var result = await signInManager.PasswordSignInAsync(user, request.Password, false, lockoutOnFailure: true);
     return result.Succeeded ? Results.NoContent() : Results.Unauthorized();
-});
+}).RequireRateLimiting("authentication");
 auth.MapPost("/logout", async (SignInManager<ApplicationUser> signInManager) => { await signInManager.SignOutAsync(); return Results.NoContent(); }).RequireAuthorization();
 auth.MapPost("/register", async (RegisterRequest request, InvitationService invitations) =>
 {
     var result = await invitations.AcceptAsync(request);
     return result.Success ? Results.NoContent() : Results.BadRequest(new { error = result.Error });
-});
+}).RequireRateLimiting("authentication");
 auth.MapGet("/csrf", (HttpContext context, IAntiforgery antiforgery) =>
     Results.Ok(new { token = antiforgery.GetAndStoreTokens(context).RequestToken }));
 auth.MapGet("/session", async (ClaimsPrincipal principal, UserManager<ApplicationUser> users, LeagueDbContext db) =>

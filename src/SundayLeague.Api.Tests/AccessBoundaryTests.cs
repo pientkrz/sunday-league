@@ -29,10 +29,23 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         var response = await _client.GetAsync("/api/public/leagues/premier-division/standings");
 
         response.EnsureSuccessStatusCode();
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Contains("default-src 'self'", response.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Equal("same-origin", response.Headers.GetValues("Cross-Origin-Opener-Policy").Single());
         var rows = await response.Content.ReadFromJsonAsync<List<StandingRow>>();
         Assert.NotNull(rows);
         Assert.Equal("Northside FC", rows![0].TeamName);
         Assert.Equal(3, rows[0].Points);
+    }
+
+    [Fact]
+    public async Task Public_health_probes_report_liveness_and_database_readiness()
+    {
+        var live = await _client.GetAsync("/health/live");
+        var ready = await _client.GetAsync("/health/ready");
+
+        Assert.Equal(HttpStatusCode.OK, live.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
     }
 
     [Fact]

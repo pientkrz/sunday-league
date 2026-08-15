@@ -46,7 +46,11 @@ dotnet user-secrets set "Bootstrap:OwnerPassword" "A-long-unique-password!42" --
 
 The first start creates the Owner. An Owner can then create one-time, hashed invitations for Competition Admins, Results Editors, and Viewers. Results Editors are restricted to the leagues assigned to them and cannot change league configuration.
 
-For production, run React and the API under the same HTTPS site, keep the Data Protection key ring outside the app directory with OS-level access controls (or a managed key store), configure PostgreSQL, and set `Invitations__ExposeCodes=false` so invitation tokens are delivered only by the email service.
+For production, run React and the API under the same HTTPS site, keep the Data Protection key ring outside the app directory with OS-level access controls (or a managed key store), configure PostgreSQL, and set `Invitations__ExposeCodes=false` so invitation tokens are delivered only by the email service. The API applies CSRF protection, secure cookies, CSP/browser security headers, account lockout, and an IP-partitioned rate limit to sign-in and invitation acceptance.
+
+## Operations
+
+Use `GET /health/live` for process liveness and `GET /health/ready` for a database readiness check. In production, configure both probes over HTTPS and only route traffic to instances that report ready.
 
 ## Tests
 
