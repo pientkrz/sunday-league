@@ -147,6 +147,33 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
     }
 
     [Fact]
+    public async Task Owner_can_generate_a_complete_round_robin_schedule_without_duplicate_pairings()
+    {
+        League league;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
+            var season = await db.Seasons.SingleAsync(item => item.Status == SeasonStatus.Active);
+            league = new League { Slug = "schedule-test", Name = "Schedule Test", Tier = 50, Season = season };
+            db.Leagues.Add(league);
+            db.Teams.AddRange(Enumerable.Range(1, 4).Select(index => new Team { League = league, Name = $"Schedule {index}", ShortName = $"S{index}" }));
+            await db.SaveChangesAsync();
+        }
+        await CreateOwnerAsync("schedule-owner@example.com");
+        await SignInAsync("schedule-owner@example.com", "TestPassword!42");
+
+        var response = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/leagues/{league.Id}/schedule/round-robin", new CreateSeasonScheduleRequest(DateTimeOffset.UtcNow.AddDays(7), 7, false));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        using var verification = factory.Services.CreateScope();
+        var matches = await verification.ServiceProvider.GetRequiredService<LeagueDbContext>().Matches.Where(match => match.LeagueId == league.Id).ToListAsync();
+        Assert.Equal(6, matches.Count);
+        Assert.Equal(3, matches.Select(match => match.RoundNumber).Distinct().Count());
+        Assert.All(matches.GroupBy(match => match.RoundNumber), round => Assert.Equal(2, round.Count()));
+        Assert.Equal(6, matches.Select(match => string.Join('-', new[] { match.HomeTeamId, match.AwayTeamId }.Order())).Distinct().Count());
+    }
+
+    [Fact]
     public async Task Owner_can_review_and_revoke_non_owner_membership()
     {
         await CreateResultsEditorAsync("members-editor@example.com");

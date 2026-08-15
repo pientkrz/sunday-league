@@ -378,6 +378,33 @@ board.MapPost("/leagues/{leagueId:guid}/rounds/random", async (Guid leagueId, Cr
     await db.SaveChangesAsync();
     return Results.Created($"/api/board/leagues/{leagueId}/rounds/{nextRound}", new { round = nextRound });
 });
+board.MapPost("/leagues/{leagueId:guid}/schedule/round-robin", async (Guid leagueId, CreateSeasonScheduleRequest request, ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access, AuditService audit) =>
+{
+    if (!await access.CanConfigureAsync(user, leagueId)) return Results.Forbid();
+    if (request.RoundIntervalDays is < 1 or > 28 || await db.Matches.AnyAsync(match => match.LeagueId == leagueId)) return Results.Conflict(new { error = "Generate a full schedule only before fixtures exist." });
+    var teams = await db.Teams.Where(team => team.LeagueId == leagueId).OrderBy(team => team.Name).Select(team => team.Id).ToListAsync();
+    if (teams.Count < 2) return Results.BadRequest(new { error = "A league needs at least two teams." });
+    if (teams.Count % 2 == 1) teams.Add(Guid.Empty);
+    var rounds = teams.Count - 1;
+    for (var round = 0; round < rounds; round++)
+    {
+        var kickoff = request.FirstKickoff.AddDays(round * request.RoundIntervalDays);
+        for (var pair = 0; pair < teams.Count / 2; pair++)
+        {
+            var home = teams[pair]; var away = teams[teams.Count - 1 - pair];
+            if (home != Guid.Empty && away != Guid.Empty) db.Matches.Add(new LeagueMatch { LeagueId = leagueId, RoundNumber = round + 1, Kickoff = kickoff, HomeTeamId = round % 2 == 0 ? home : away, AwayTeamId = round % 2 == 0 ? away : home, Status = MatchStatus.Scheduled });
+        }
+        var last = teams[^1]; teams.RemoveAt(teams.Count - 1); teams.Insert(1, last);
+    }
+    if (request.DoubleRoundRobin)
+    {
+        var firstLeg = db.Matches.Local.Where(match => match.LeagueId == leagueId).ToList();
+        foreach (var match in firstLeg) db.Matches.Add(new LeagueMatch { LeagueId = leagueId, RoundNumber = match.RoundNumber + rounds, Kickoff = match.Kickoff.AddDays(rounds * request.RoundIntervalDays), HomeTeamId = match.AwayTeamId, AwayTeamId = match.HomeTeamId, Status = MatchStatus.Scheduled });
+    }
+    await audit.RecordAsync(user, "schedule.round_robin.created", "League", leagueId, $"{rounds} rounds generated.");
+    await db.SaveChangesAsync();
+    return Results.Created($"/api/board/leagues/{leagueId}/schedule", new { rounds = request.DoubleRoundRobin ? rounds * 2 : rounds });
+});
 board.MapPost("/leagues/{leagueId:guid}/rounds/manual", async (Guid leagueId, CreateManualRoundRequest request, ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access, AuditService audit) =>
 {
     if (!await access.CanConfigureAsync(user, leagueId)) return Results.Forbid();

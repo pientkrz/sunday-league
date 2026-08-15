@@ -12,6 +12,7 @@ public sealed record UpdateResultRequest(int HomeScore, int AwayScore, Guid Vers
 public sealed record UpdateFixtureKickoffRequest(DateTimeOffset Kickoff, Guid Version);
 public sealed record CancelFixtureRequest(Guid Version);
 public sealed record CreateRoundRequest(DateTimeOffset Kickoff);
+public sealed record CreateSeasonScheduleRequest(DateTimeOffset FirstKickoff, int RoundIntervalDays, bool DoubleRoundRobin);
 public sealed record CreateInvitationRequest(string Email, BoardRole Role, Guid? LeagueId);
 public sealed record InvitationResponse(string Email, BoardRole Role, Guid? LeagueId, string? DevelopmentToken);
 public sealed record BoardSession(string DisplayName, string Email, IReadOnlyList<MembershipSummary> Memberships);
