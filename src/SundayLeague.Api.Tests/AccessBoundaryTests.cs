@@ -199,6 +199,29 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
     }
 
     [Fact]
+    public async Task Owner_can_reorder_the_complete_league_hierarchy_with_an_audit_record()
+    {
+        await CreateOwnerAsync("hierarchy-owner@example.com");
+        await SignInAsync("hierarchy-owner@example.com", "TestPassword!42");
+        using var beforeScope = factory.Services.CreateScope();
+        var db = beforeScope.ServiceProvider.GetRequiredService<LeagueDbContext>();
+        var initialOrder = await db.Leagues.OrderBy(league => league.Tier).Select(league => league.Id).ToListAsync();
+        Assert.NotEmpty(initialOrder);
+
+        var response = await SendWithCsrfAsync(HttpMethod.Put, "/api/board/leagues/hierarchy", new ReorderLeaguesRequest(initialOrder.AsEnumerable().Reverse().ToList()));
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        using var verification = factory.Services.CreateScope();
+        var verificationDb = verification.ServiceProvider.GetRequiredService<LeagueDbContext>();
+        var reordered = await verificationDb.Leagues.OrderBy(league => league.Tier).Select(league => league.Id).ToListAsync();
+        Assert.Equal(initialOrder.AsEnumerable().Reverse(), reordered);
+        Assert.True(await verificationDb.AuditEvents.AnyAsync(item => item.Action == "league.hierarchy.updated"));
+
+        var restoreResponse = await SendWithCsrfAsync(HttpMethod.Put, "/api/board/leagues/hierarchy", new ReorderLeaguesRequest(initialOrder));
+        Assert.Equal(HttpStatusCode.NoContent, restoreResponse.StatusCode);
+    }
+
+    [Fact]
     public async Task Owner_can_postpone_reschedule_and_cancel_an_unplayed_fixture_with_audit_records()
     {
         var league = await CreateOwnerAsync("fixture-owner@example.com");
