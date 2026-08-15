@@ -23,3 +23,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+bin/
+obj/
+
+# Local development database and ASP.NET user secrets
+*.db
+*.db-shm
+*.db-wal
+appsettings.Development.json
+TestResults/
+.keys/

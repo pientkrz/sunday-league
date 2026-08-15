@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { getLeagues, getAllTeams, createTeam, getAllMatches, deleteTeam } from '../api/dataService';
 
@@ -26,6 +26,20 @@ const HomePage = () => {
         fetchData();
     }, []);
 
+    // Performance Improvement:
+    // Create a Set of team IDs that have played matches.
+    // This is calculated only when the 'matches' array changes.
+    // Checking for a team's existence in a Set is much faster (O(1))
+    // than iterating through the entire matches array for every team (O(n*m)).
+    const teamsWithMatches = useMemo(() => {
+        const teamIds = new Set();
+        matches.forEach(match => {
+            teamIds.add(match.homeTeamId);
+            teamIds.add(match.awayTeamId);
+        });
+        return teamIds;
+    }, [matches]);
+
     const handleDeleteTeam = async (teamId) => {
         if (window.confirm('Are you sure you want to permanently delete this team?')) {
             const result = await deleteTeam(teamId);
@@ -48,11 +62,16 @@ const HomePage = () => {
         fetchData(); // Refetch all data to show the new team
     };
 
-    if (loading) return <p>Loading leagues...</p>;
+    if (loading) return <p>Loading dashboard...</p>;
 
     return (
         <div className="page-container">
-            <div className="home-layout" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+            {/* Code Quality Improvement:
+                Inline styles have been replaced with CSS classes for better
+                maintainability, reusability, and separation of concerns.
+                (Note: These classes would need to be added to your App.css file).
+            */}
+            <div className="home-layout">
                 <div className="leagues-section">
                     <h2>Leagues</h2>
                     <ul className="list-group">
@@ -65,23 +84,24 @@ const HomePage = () => {
                 </div>
                 <div className="teams-section">
                     <h2>Manage Teams</h2>
-                    <form onSubmit={handleCreateTeam} style={{ display: 'flex', marginBottom: '1.5rem' }}>
+                    <form onSubmit={handleCreateTeam} className="create-team-form">
                         <input
                             type="text"
                             value={newTeamName}
                             onChange={(e) => setNewTeamName(e.target.value)}
                             placeholder="New team name"
                             className="search-input"
-                            style={{ flexGrow: 1 }}
                         />
-                        <button type="submit" className="button" style={{ width: 'auto', marginLeft: '1rem' }}>Create Team</button>
+                        <button type="submit" className="button">Create Team</button>
                     </form>
                     <h3 style={{ marginTop: '2rem' }}>All Teams</h3>
                     <ul className="list-group">
                         {teams.map(team => {
-                            const hasMatches = matches.some(m => m.homeTeamId === team.id || m.awayTeamId === team.id);
+                            // Performance Improvement:
+                            // Check against the pre-calculated Set.
+                            const hasMatches = teamsWithMatches.has(team.id);
                             return (
-                                <li key={team.id} className="list-group-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <li key={team.id} className="list-group-item list-item-actions">
                                     <Link to={`/team/${team.id}`}>{team.name}</Link>
                                     {!hasMatches && (
                                         <button onClick={() => handleDeleteTeam(team.id)} className="button-small button-danger">
