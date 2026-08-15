@@ -19,7 +19,18 @@ npm run dev
 dotnet run --project src/SundayLeague.Api --launch-profile https
 ```
 
-The Vite development server proxies `/api` requests to `https://localhost:7134`. The dashboard and fixtures use the live public API. The Board Portal supports sign-in, accepting an invitation, scoped result entry, Owner invitations, league publishing/rules, team additions, league hierarchy ordering, and random or manual complete-round scheduling. The API is persistent: it uses SQLite locally and automatically uses PostgreSQL when `ConnectionStrings__DefaultConnection` begins with `Host=`.
+The Vite development server proxies `/api` requests to `https://localhost:7134`. The dashboard and fixtures use the live public API. The Board Portal supports sign-in, accepting an invitation, scoped result entry, Owner invitations, league publishing/rules, team additions, league hierarchy ordering, and random or manual complete-round scheduling. The API is persistent: it uses SQLite locally and automatically uses PostgreSQL when `ConnectionStrings__DefaultConnection` begins with `Host=`. Schema changes are applied through EF Core migrations at startup rather than by creating an unmanaged database schema.
+
+## Database migrations
+
+The repository pins the EF Core command-line tool. Restore it once after cloning, then generate migrations whenever the persistence model changes:
+
+```powershell
+dotnet tool restore
+dotnet tool run dotnet-ef migrations add DescriptiveName --project src/SundayLeague.Api --startup-project src/SundayLeague.Api --output-dir Data/Migrations
+```
+
+Review generated migrations in pull requests. Back up a production database and run migrations as part of the deployment process before rolling out a new API version.
 
 ## Secure board setup
 
