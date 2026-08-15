@@ -19,7 +19,7 @@ public sealed class LeagueDbContext(DbContextOptions<LeagueDbContext> options) :
     {
         base.OnModelCreating(builder);
         builder.Entity<Season>(entity => { entity.HasIndex(x => x.Name).IsUnique(); entity.Property(x => x.Name).HasMaxLength(80); });
-        builder.Entity<League>(entity => { entity.HasIndex(x => x.Slug).IsUnique(); entity.Property(x => x.Name).HasMaxLength(120); entity.HasOne(x => x.Season).WithMany(x => x.Leagues).HasForeignKey(x => x.SeasonId).OnDelete(DeleteBehavior.Restrict); });
+        builder.Entity<League>(entity => { entity.HasIndex(x => new { x.SeasonId, x.Slug }).IsUnique(); entity.Property(x => x.Name).HasMaxLength(120); entity.HasOne(x => x.Season).WithMany(x => x.Leagues).HasForeignKey(x => x.SeasonId).OnDelete(DeleteBehavior.Restrict); });
         builder.Entity<Team>(entity => { entity.HasIndex(x => new { x.LeagueId, x.Name }).IsUnique(); entity.Property(x => x.Name).HasMaxLength(120); entity.Property(x => x.ShortName).HasMaxLength(5); });
         builder.Entity<LeagueMatch>(entity =>
         {
