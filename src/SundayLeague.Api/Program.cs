@@ -294,8 +294,22 @@ board.MapPut("/teams/{teamId:guid}", async (Guid teamId, UpdateTeamRequest reque
     if (!await access.CanConfigureAsync(user, team.LeagueId) || !await access.CanConfigureAsync(user, request.LeagueId)) return Results.Forbid();
     if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 120 || string.IsNullOrWhiteSpace(request.ShortName) || request.ShortName.Trim().Length > 5 || !await db.Leagues.AnyAsync(league => league.Id == request.LeagueId))
         return Results.BadRequest(new { error = "Provide valid team details and league." });
+    if (team.LeagueId != request.LeagueId && await db.Matches.AnyAsync(match => match.HomeTeamId == team.Id || match.AwayTeamId == team.Id))
+        return Results.Conflict(new { error = "A team with fixtures cannot be moved to another league." });
     team.Name = request.Name.Trim(); team.ShortName = request.ShortName.Trim().ToUpperInvariant(); team.LeagueId = request.LeagueId;
     await audit.RecordAsync(user, "team.updated", "Team", team.Id, team.Name);
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+board.MapDelete("/teams/{teamId:guid}", async (Guid teamId, ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access, AuditService audit) =>
+{
+    var team = await db.Teams.SingleOrDefaultAsync(item => item.Id == teamId);
+    if (team is null) return Results.NotFound();
+    if (!await access.CanConfigureAsync(user, team.LeagueId)) return Results.Forbid();
+    if (await db.Matches.AnyAsync(match => match.HomeTeamId == team.Id || match.AwayTeamId == team.Id))
+        return Results.Conflict(new { error = "A team with fixtures cannot be removed." });
+    db.Teams.Remove(team);
+    await audit.RecordAsync(user, "team.deleted", "Team", team.Id, team.Name);
     await db.SaveChangesAsync();
     return Results.NoContent();
 });

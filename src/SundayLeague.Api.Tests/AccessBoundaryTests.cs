@@ -109,6 +109,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         var rescheduleResponse = await SendWithCsrfAsync(HttpMethod.Put, $"/api/board/matches/{fixture.Id}/kickoff", new UpdateFixtureKickoffRequest(DateTimeOffset.UtcNow.AddDays(8), fixture.Version));
         var postponeResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/matches/{fixture.Id}/postpone", new CancelFixtureRequest(fixture.Version));
         var cancelResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/matches/{fixture.Id}/cancel", new CancelFixtureRequest(fixture.Version));
+        var teamRemovalResponse = await SendWithCsrfAsync(HttpMethod.Delete, $"/api/board/teams/{await GetTeamIdAsync(league.Id)}", new { });
 
         Assert.Equal(HttpStatusCode.NoContent, resultResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, schedulerResponse.StatusCode);
@@ -118,6 +119,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         Assert.Equal(HttpStatusCode.Forbidden, rescheduleResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, postponeResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, cancelResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, teamRemovalResponse.StatusCode);
         using var verification = factory.Services.CreateScope();
         var reported = await verification.ServiceProvider.GetRequiredService<LeagueDbContext>().Matches.SingleAsync(match => match.Id == fixture.Id);
         Assert.Equal(MatchStatus.Reported, reported.Status);
@@ -219,6 +221,39 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
 
         var restoreResponse = await SendWithCsrfAsync(HttpMethod.Put, "/api/board/leagues/hierarchy", new ReorderLeaguesRequest(initialOrder));
         Assert.Equal(HttpStatusCode.NoContent, restoreResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Owner_can_move_and_remove_a_team_without_fixtures_with_audit_records()
+    {
+        League sourceLeague;
+        League destinationLeague;
+        Team team;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
+            var season = await db.Seasons.SingleAsync(item => item.Status == SeasonStatus.Active);
+            sourceLeague = await db.Leagues.OrderBy(league => league.Tier).FirstAsync();
+            destinationLeague = new League { Name = "Team Move Test", Slug = $"team-move-{Guid.NewGuid():N}", Tier = (await db.Leagues.MaxAsync(league => league.Tier)) + 1, Season = season };
+            team = new Team { League = sourceLeague, Name = "Movable Town", ShortName = "MOVE" };
+            db.Leagues.Add(destinationLeague);
+            db.Teams.Add(team);
+            await db.SaveChangesAsync();
+        }
+        await CreateOwnerAsync("team-owner@example.com");
+        await SignInAsync("team-owner@example.com", "TestPassword!42");
+
+        var moveResponse = await SendWithCsrfAsync(HttpMethod.Put, $"/api/board/teams/{team.Id}", new UpdateTeamRequest(team.Name, team.ShortName, destinationLeague.Id));
+        Assert.Equal(HttpStatusCode.NoContent, moveResponse.StatusCode);
+        var removeResponse = await SendWithCsrfAsync(HttpMethod.Delete, $"/api/board/teams/{team.Id}", new { });
+
+        Assert.Equal(HttpStatusCode.NoContent, removeResponse.StatusCode);
+        using var verification = factory.Services.CreateScope();
+        var verificationDb = verification.ServiceProvider.GetRequiredService<LeagueDbContext>();
+        Assert.False(await verificationDb.Teams.AnyAsync(item => item.Id == team.Id));
+        var auditEvents = await verificationDb.AuditEvents.Where(item => item.EntityId == team.Id).Select(item => item.Action).ToListAsync();
+        Assert.Contains("team.updated", auditEvents);
+        Assert.Contains("team.deleted", auditEvents);
     }
 
     [Fact]
