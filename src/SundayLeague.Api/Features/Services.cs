@@ -13,18 +13,23 @@ public sealed class StandingsService(LeagueDbContext db)
 {
     public async Task<IReadOnlyList<StandingRow>> GetAsync(Guid leagueId)
     {
+        var league = await db.Leagues.SingleAsync(league => league.Id == leagueId);
         var teams = await db.Teams.Where(team => team.LeagueId == leagueId).OrderBy(team => team.Name).ToListAsync();
         var matches = await db.Matches.Where(match => match.LeagueId == leagueId && match.Status == MatchStatus.Confirmed).ToListAsync();
-        return teams.Select(team =>
+        var rows = teams.Select(team =>
         {
             var played = matches.Where(match => match.HomeTeamId == team.Id || match.AwayTeamId == team.Id).ToList();
             var goalsFor = played.Sum(match => match.HomeTeamId == team.Id ? match.HomeScore ?? 0 : match.AwayScore ?? 0);
             var goalsAgainst = played.Sum(match => match.HomeTeamId == team.Id ? match.AwayScore ?? 0 : match.HomeScore ?? 0);
             var won = played.Count(match => (match.HomeTeamId == team.Id ? match.HomeScore : match.AwayScore) > (match.HomeTeamId == team.Id ? match.AwayScore : match.HomeScore));
             var drawn = played.Count(match => match.HomeScore == match.AwayScore);
-            return new StandingRow(0, team.Id, team.Name, played.Count, won, drawn, played.Count - won - drawn, goalsFor, goalsAgainst, won * 3 + drawn);
-        }).OrderByDescending(row => row.Points).ThenByDescending(row => row.GoalDifference).ThenByDescending(row => row.GoalsFor)
-          .Select((row, index) => row with { Position = index + 1 }).ToList();
+            var lost = played.Count - won - drawn;
+            return new StandingRow(0, team.Id, team.Name, played.Count, won, drawn, lost, goalsFor, goalsAgainst, won * league.WinPoints + drawn * league.DrawPoints + lost * league.LossPoints);
+        });
+        var ordered = league.Tiebreaker == StandingTiebreaker.GoalsForThenGoalDifference
+            ? rows.OrderByDescending(row => row.Points).ThenByDescending(row => row.GoalsFor).ThenByDescending(row => row.GoalDifference).ThenBy(row => row.TeamName)
+            : rows.OrderByDescending(row => row.Points).ThenByDescending(row => row.GoalDifference).ThenByDescending(row => row.GoalsFor).ThenBy(row => row.TeamName);
+        return ordered.Select((row, index) => row with { Position = index + 1 }).ToList();
     }
 }
 

@@ -122,7 +122,7 @@ var publicApi = app.MapGroup("/api/public").RequireRateLimiting("public");
 publicApi.MapGet("/leagues", async (LeagueDbContext db) =>
     await db.Leagues.Where(league => league.IsPublished)
         .OrderBy(league => league.Tier)
-        .Select(league => new LeagueSummary(league.Id, league.Slug, league.Name, league.Tier, league.PromotionPlaces, league.RelegationPlaces, league.PlayoffPlaces))
+        .Select(league => new LeagueSummary(league.Id, league.Slug, league.Name, league.Tier, league.PromotionPlaces, league.RelegationPlaces, league.PlayoffPlaces, league.WinPoints, league.DrawPoints, league.LossPoints, league.Tiebreaker))
         .ToListAsync());
 publicApi.MapGet("/leagues/{slug}/standings", async (string slug, LeagueDbContext db, StandingsService standings) =>
 {
@@ -183,7 +183,7 @@ board.MapGet("/leagues", async (ClaimsPrincipal user, LeagueDbContext db, BoardA
 {
     if (!await access.IsBoardMemberAsync(user)) return Results.Forbid();
     var leagues = await db.Leagues.OrderBy(league => league.Tier).Select(league => new BoardLeagueConfiguration(
-        league.Id, league.Slug, league.Name, league.Tier, league.PromotionPlaces, league.RelegationPlaces, league.PlayoffPlaces, league.IsPublished,
+        league.Id, league.Slug, league.Name, league.Tier, league.PromotionPlaces, league.RelegationPlaces, league.PlayoffPlaces, league.WinPoints, league.DrawPoints, league.LossPoints, league.Tiebreaker, league.IsPublished,
         league.Teams.OrderBy(team => team.Name).Select(team => new BoardTeam(team.Id, team.Name, team.ShortName, team.CrestUrl)).ToList())).ToListAsync();
     return Results.Ok(leagues);
 });
@@ -191,11 +191,11 @@ board.MapPost("/leagues", async (CreateLeagueRequest request, ClaimsPrincipal us
 {
     if (!await access.IsOwnerAsync(user)) return Results.Forbid();
     var slug = LeagueSlug.From(request.Name);
-    if (string.IsNullOrWhiteSpace(slug) || request.Name.Length > 120 || request.PromotionPlaces < 0 || request.RelegationPlaces < 0 || request.PlayoffPlaces < 0)
+    if (string.IsNullOrWhiteSpace(slug) || request.Name.Length > 120 || request.PromotionPlaces < 0 || request.RelegationPlaces < 0 || request.PlayoffPlaces < 0 || !LeagueRules.HasValidScoring(request.WinPoints, request.DrawPoints, request.LossPoints, request.Tiebreaker))
         return Results.BadRequest(new { error = "Provide a valid league configuration." });
     if (await db.Leagues.AnyAsync(league => league.Slug == slug)) return Results.Conflict(new { error = "A league with this name already exists." });
     var tier = (await db.Leagues.Select(league => (int?)league.Tier).MaxAsync() ?? 0) + 1;
-    var league = new League { Name = request.Name.Trim(), Slug = slug, Tier = tier, PromotionPlaces = request.PromotionPlaces, RelegationPlaces = request.RelegationPlaces, PlayoffPlaces = request.PlayoffPlaces, IsPublished = request.IsPublished };
+    var league = new League { Name = request.Name.Trim(), Slug = slug, Tier = tier, PromotionPlaces = request.PromotionPlaces, RelegationPlaces = request.RelegationPlaces, PlayoffPlaces = request.PlayoffPlaces, WinPoints = request.WinPoints, DrawPoints = request.DrawPoints, LossPoints = request.LossPoints, Tiebreaker = request.Tiebreaker, IsPublished = request.IsPublished };
     db.Leagues.Add(league);
     await audit.RecordAsync(user, "league.created", "League", league.Id, league.Name);
     await db.SaveChangesAsync();
@@ -206,9 +206,9 @@ board.MapPut("/leagues/{leagueId:guid}", async (Guid leagueId, UpdateLeagueReque
     var league = await db.Leagues.SingleOrDefaultAsync(item => item.Id == leagueId);
     if (league is null) return Results.NotFound();
     if (!await access.CanConfigureAsync(user, leagueId)) return Results.Forbid();
-    if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 120 || request.PromotionPlaces < 0 || request.RelegationPlaces < 0 || request.PlayoffPlaces < 0)
+    if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 120 || request.PromotionPlaces < 0 || request.RelegationPlaces < 0 || request.PlayoffPlaces < 0 || !LeagueRules.HasValidScoring(request.WinPoints, request.DrawPoints, request.LossPoints, request.Tiebreaker))
         return Results.BadRequest(new { error = "Provide a valid league configuration." });
-    league.Name = request.Name.Trim(); league.PromotionPlaces = request.PromotionPlaces; league.RelegationPlaces = request.RelegationPlaces; league.PlayoffPlaces = request.PlayoffPlaces; league.IsPublished = request.IsPublished;
+    league.Name = request.Name.Trim(); league.PromotionPlaces = request.PromotionPlaces; league.RelegationPlaces = request.RelegationPlaces; league.PlayoffPlaces = request.PlayoffPlaces; league.WinPoints = request.WinPoints; league.DrawPoints = request.DrawPoints; league.LossPoints = request.LossPoints; league.Tiebreaker = request.Tiebreaker; league.IsPublished = request.IsPublished;
     await audit.RecordAsync(user, "league.updated", "League", league.Id, league.Name);
     await db.SaveChangesAsync();
     return Results.NoContent();
