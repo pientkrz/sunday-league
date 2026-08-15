@@ -78,6 +78,7 @@ builder.Services.AddScoped<BoardAuthorizationService>();
 builder.Services.AddScoped<StandingsService>();
 builder.Services.AddScoped<InvitationService>();
 builder.Services.AddScoped<AuditService>();
+builder.Services.AddScoped<SeasonService>();
 builder.Services.AddScoped<InitialOwnerService>();
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
     .WithOrigins(builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? ["http://localhost:5173"])
@@ -114,24 +115,25 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
     await db.Database.MigrateAsync();
+    await scope.ServiceProvider.GetRequiredService<SeasonService>().EnsureActiveSeasonAsync();
     await LeagueSeed.EnsureSeededAsync(db);
     await scope.ServiceProvider.GetRequiredService<InitialOwnerService>().EnsureCreatedAsync();
 }
 
 var publicApi = app.MapGroup("/api/public").RequireRateLimiting("public");
 publicApi.MapGet("/leagues", async (LeagueDbContext db) =>
-    await db.Leagues.Where(league => league.IsPublished)
+    await db.Leagues.Where(league => league.IsPublished && league.Season!.Status == SeasonStatus.Active)
         .OrderBy(league => league.Tier)
-        .Select(league => new LeagueSummary(league.Id, league.Slug, league.Name, league.Tier, league.PromotionPlaces, league.RelegationPlaces, league.PlayoffPlaces, league.WinPoints, league.DrawPoints, league.LossPoints, league.Tiebreaker))
+        .Select(league => new LeagueSummary(league.Id, league.Slug, league.Name, league.Tier, league.PromotionPlaces, league.RelegationPlaces, league.PlayoffPlaces, league.WinPoints, league.DrawPoints, league.LossPoints, league.Tiebreaker, league.Season!.Name))
         .ToListAsync());
 publicApi.MapGet("/leagues/{slug}/standings", async (string slug, LeagueDbContext db, StandingsService standings) =>
 {
-    var league = await db.Leagues.SingleOrDefaultAsync(item => item.Slug == slug && item.IsPublished);
+    var league = await db.Leagues.SingleOrDefaultAsync(item => item.Slug == slug && item.IsPublished && item.Season!.Status == SeasonStatus.Active);
     return league is null ? Results.NotFound() : Results.Ok(await standings.GetAsync(league.Id));
 });
 publicApi.MapGet("/leagues/{slug}/fixtures", async (string slug, LeagueDbContext db) =>
 {
-    var league = await db.Leagues.SingleOrDefaultAsync(item => item.Slug == slug && item.IsPublished);
+    var league = await db.Leagues.SingleOrDefaultAsync(item => item.Slug == slug && item.IsPublished && item.Season!.Status == SeasonStatus.Active);
     if (league is null) return Results.NotFound();
     return Results.Ok(await db.Matches.Where(match => match.LeagueId == league.Id)
         .OrderBy(match => match.RoundNumber).ThenBy(match => match.Id).Select(match => new PublicFixture(match.Id, match.RoundNumber, match.Kickoff, match.HomeTeam.Name, match.AwayTeam.Name, match.HomeScore, match.AwayScore, match.Status, match.Version)).ToListAsync());
@@ -183,9 +185,37 @@ board.MapGet("/leagues", async (ClaimsPrincipal user, LeagueDbContext db, BoardA
 {
     if (!await access.IsBoardMemberAsync(user)) return Results.Forbid();
     var leagues = await db.Leagues.OrderBy(league => league.Tier).Select(league => new BoardLeagueConfiguration(
-        league.Id, league.Slug, league.Name, league.Tier, league.PromotionPlaces, league.RelegationPlaces, league.PlayoffPlaces, league.WinPoints, league.DrawPoints, league.LossPoints, league.Tiebreaker, league.IsPublished,
+        league.Id, league.Slug, league.Name, league.Tier, league.PromotionPlaces, league.RelegationPlaces, league.PlayoffPlaces, league.WinPoints, league.DrawPoints, league.LossPoints, league.Tiebreaker, league.IsPublished, league.SeasonId, league.Season == null ? null : league.Season.Name,
         league.Teams.OrderBy(team => team.Name).Select(team => new BoardTeam(team.Id, team.Name, team.ShortName, team.CrestUrl)).ToList())).ToListAsync();
     return Results.Ok(leagues);
+});
+board.MapGet("/seasons", async (ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access) =>
+{
+    if (!await access.IsOwnerAsync(user)) return Results.Forbid();
+    return Results.Ok(await db.Seasons.OrderByDescending(season => season.StartsOn).Select(season => new SeasonSummary(season.Id, season.Name, season.StartsOn, season.EndsOn, season.Status)).ToListAsync());
+});
+board.MapPost("/seasons", async (CreateSeasonRequest request, ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access, AuditService audit) =>
+{
+    if (!await access.IsOwnerAsync(user)) return Results.Forbid();
+    if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 80 || request.EndsOn <= request.StartsOn || await db.Seasons.AnyAsync(season => season.Name == request.Name.Trim())) return Results.BadRequest(new { error = "Provide a unique season name and valid date range." });
+    var season = new Season { Name = request.Name.Trim(), StartsOn = request.StartsOn, EndsOn = request.EndsOn, Status = SeasonStatus.Draft };
+    db.Seasons.Add(season);
+    await audit.RecordAsync(user, "season.created", "Season", season.Id, season.Name);
+    await db.SaveChangesAsync();
+    return Results.Created($"/api/board/seasons/{season.Id}", new { season.Id });
+});
+board.MapPut("/seasons/{seasonId:guid}", async (Guid seasonId, UpdateSeasonRequest request, ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access, AuditService audit, SeasonService seasons) =>
+{
+    if (!await access.IsOwnerAsync(user)) return Results.Forbid();
+    var season = await db.Seasons.SingleOrDefaultAsync(item => item.Id == seasonId);
+    if (season is null) return Results.NotFound();
+    if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 80 || request.EndsOn <= request.StartsOn || !Enum.IsDefined(request.Status)) return Results.BadRequest(new { error = "Provide a valid season configuration." });
+    if (request.Status == SeasonStatus.Active && await db.Seasons.AnyAsync(item => item.Id != seasonId && item.Status == SeasonStatus.Active)) return Results.Conflict(new { error = "Archive the current active season before activating another one." });
+    if (request.Status == SeasonStatus.Archived && await seasons.HasUnplayedFixturesAsync(seasonId)) return Results.Conflict(new { error = "All fixtures must be played or cancelled before archiving a season." });
+    season.Name = request.Name.Trim(); season.StartsOn = request.StartsOn; season.EndsOn = request.EndsOn; season.Status = request.Status;
+    await audit.RecordAsync(user, "season.updated", "Season", season.Id, $"{season.Name} => {season.Status}");
+    await db.SaveChangesAsync();
+    return Results.NoContent();
 });
 board.MapGet("/members", async (ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access) =>
 {
@@ -214,7 +244,8 @@ board.MapPost("/leagues", async (CreateLeagueRequest request, ClaimsPrincipal us
         return Results.BadRequest(new { error = "Provide a valid league configuration." });
     if (await db.Leagues.AnyAsync(league => league.Slug == slug)) return Results.Conflict(new { error = "A league with this name already exists." });
     var tier = (await db.Leagues.Select(league => (int?)league.Tier).MaxAsync() ?? 0) + 1;
-    var league = new League { Name = request.Name.Trim(), Slug = slug, Tier = tier, PromotionPlaces = request.PromotionPlaces, RelegationPlaces = request.RelegationPlaces, PlayoffPlaces = request.PlayoffPlaces, WinPoints = request.WinPoints, DrawPoints = request.DrawPoints, LossPoints = request.LossPoints, Tiebreaker = request.Tiebreaker, IsPublished = request.IsPublished };
+    var activeSeason = await db.Seasons.SingleAsync(season => season.Status == SeasonStatus.Active);
+    var league = new League { Name = request.Name.Trim(), Slug = slug, Tier = tier, PromotionPlaces = request.PromotionPlaces, RelegationPlaces = request.RelegationPlaces, PlayoffPlaces = request.PlayoffPlaces, WinPoints = request.WinPoints, DrawPoints = request.DrawPoints, LossPoints = request.LossPoints, Tiebreaker = request.Tiebreaker, IsPublished = request.IsPublished, SeasonId = activeSeason.Id };
     db.Leagues.Add(league);
     await audit.RecordAsync(user, "league.created", "League", league.Id, league.Name);
     await db.SaveChangesAsync();

@@ -8,7 +8,8 @@ public static class LeagueSeed
     public static async Task EnsureSeededAsync(LeagueDbContext db)
     {
         if (await db.Leagues.AnyAsync()) return;
-        var premier = new League { Slug = "premier-division", Name = "Premier Division", Tier = 1, RelegationPlaces = 2, PlayoffPlaces = 2, IsPublished = true };
+        var activeSeason = await db.Seasons.SingleAsync(season => season.Status == SeasonStatus.Active);
+        var premier = new League { Slug = "premier-division", Name = "Premier Division", Tier = 1, RelegationPlaces = 2, PlayoffPlaces = 2, IsPublished = true, Season = activeSeason };
         db.Leagues.Add(premier);
         var teams = new[] { "Northside FC", "Riverside Rovers", "Old Town Athletic", "Park United" }
             .Select((name, index) => new Team { League = premier, Name = name, ShortName = $"T{index + 1}" }).ToArray();

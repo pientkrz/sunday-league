@@ -76,6 +76,27 @@ public sealed class AuditService(LeagueDbContext db)
     }
 }
 
+public sealed class SeasonService(LeagueDbContext db)
+{
+    public async Task EnsureActiveSeasonAsync()
+    {
+        var active = await db.Seasons.SingleOrDefaultAsync(season => season.Status == SeasonStatus.Active);
+        if (active is null)
+        {
+            var year = DateTime.UtcNow.Year;
+            active = await db.Seasons.SingleOrDefaultAsync(season => season.Name == $"{year}/{(year + 1) % 100:D2}")
+                ?? new Season { Name = $"{year}/{(year + 1) % 100:D2}", StartsOn = new DateOnly(year, 7, 1), EndsOn = new DateOnly(year + 1, 6, 30) };
+            active.Status = SeasonStatus.Active;
+            if (db.Entry(active).State == EntityState.Detached) db.Seasons.Add(active);
+        }
+        var legacyLeagues = await db.Leagues.Where(league => league.SeasonId == null).ToListAsync();
+        foreach (var league in legacyLeagues) league.SeasonId = active.Id;
+        if (legacyLeagues.Count > 0 || db.ChangeTracker.HasChanges()) await db.SaveChangesAsync();
+    }
+
+    public Task<bool> HasUnplayedFixturesAsync(Guid seasonId) => db.Matches.AnyAsync(match => match.League.SeasonId == seasonId && (match.Status == MatchStatus.Scheduled || match.Status == MatchStatus.Reported || match.Status == MatchStatus.Postponed));
+}
+
 /// <summary>Creates the first Owner only when credentials are supplied through user-secrets or environment variables.</summary>
 public sealed class InitialOwnerService(LeagueDbContext db, UserManager<ApplicationUser> users, IConfiguration configuration)
 {
