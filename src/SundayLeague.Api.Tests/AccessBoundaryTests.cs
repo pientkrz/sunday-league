@@ -106,6 +106,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         var teamResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/leagues/{league.Id}/teams", new CreateTeamRequest("Unauthorised FC", "UFC"));
         var crestResponse = await SendCrestWithCsrfAsync(await GetTeamIdAsync(league.Id), "not-a-crest");
         var memberListResponse = await _client.GetAsync("/api/board/members");
+        var auditListResponse = await _client.GetAsync("/api/board/audit-events");
         var rescheduleResponse = await SendWithCsrfAsync(HttpMethod.Put, $"/api/board/matches/{fixture.Id}/kickoff", new UpdateFixtureKickoffRequest(DateTimeOffset.UtcNow.AddDays(8), fixture.Version));
         var postponeResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/matches/{fixture.Id}/postpone", new CancelFixtureRequest(fixture.Version));
         var cancelResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/matches/{fixture.Id}/cancel", new CancelFixtureRequest(fixture.Version));
@@ -116,6 +117,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         Assert.Equal(HttpStatusCode.Forbidden, teamResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, crestResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, memberListResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, auditListResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, rescheduleResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, postponeResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, cancelResponse.StatusCode);
@@ -198,6 +200,22 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
         Assert.False(await db.BoardMemberships.AnyAsync(membership => membership.Id == editor.MembershipId));
         Assert.True(await db.AuditEvents.AnyAsync(item => item.EntityId == editor.MembershipId && item.Action == "membership.revoked"));
+    }
+
+    [Fact]
+    public async Task Owner_can_view_recent_audit_events()
+    {
+        var league = await CreateOwnerAsync("audit-owner@example.com");
+        await SignInAsync("audit-owner@example.com", "TestPassword!42");
+        var createTeam = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/leagues/{league.Id}/teams", new CreateTeamRequest("Audit Trail FC", "ATFC"));
+        Assert.Equal(HttpStatusCode.Created, createTeam.StatusCode);
+
+        var response = await _client.GetAsync("/api/board/audit-events");
+
+        response.EnsureSuccessStatusCode();
+        var events = await response.Content.ReadFromJsonAsync<List<AuditEventSummary>>();
+        var teamCreated = Assert.Single(events!, item => item.Action == "team.created" && item.Detail == "Audit Trail FC");
+        Assert.Equal("Test Owner", teamCreated.ActorDisplayName);
     }
 
     [Fact]

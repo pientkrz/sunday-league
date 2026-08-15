@@ -22,6 +22,7 @@ public sealed record CreateSeasonRequest(string Name, DateOnly StartsOn, DateOnl
 public sealed record UpdateSeasonRequest(string Name, DateOnly StartsOn, DateOnly EndsOn, SeasonStatus Status);
 public sealed record BoardLeagueConfiguration(Guid Id, string Slug, string Name, int Tier, int PromotionPlaces, int RelegationPlaces, int PlayoffPlaces, int WinPoints, int DrawPoints, int LossPoints, StandingTiebreaker Tiebreaker, bool IsPublished, Guid? SeasonId, string? SeasonName, IReadOnlyList<BoardTeam> Teams);
 public sealed record BoardMemberSummary(Guid MembershipId, string DisplayName, string Email, Guid? LeagueId, string? LeagueName, BoardRole Role);
+public sealed record AuditEventSummary(Guid Id, DateTimeOffset OccurredAt, string Action, string EntityType, Guid EntityId, string Detail, string? ActorDisplayName);
 public sealed record BoardTeam(Guid Id, string Name, string ShortName, string? CrestUrl);
 public sealed record CreateLeagueRequest(string Name, int PromotionPlaces, int RelegationPlaces, int PlayoffPlaces, int WinPoints, int DrawPoints, int LossPoints, StandingTiebreaker Tiebreaker, bool IsPublished);
 public sealed record UpdateLeagueRequest(string Name, int PromotionPlaces, int RelegationPlaces, int PlayoffPlaces, int WinPoints, int DrawPoints, int LossPoints, StandingTiebreaker Tiebreaker, bool IsPublished);
