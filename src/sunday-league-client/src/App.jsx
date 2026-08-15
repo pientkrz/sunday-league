@@ -72,13 +72,20 @@ export default function App() {
       await loadLeague();
     } catch (requestError) { setError(requestError.message); }
   };
+  const confirmResult = async fixture => {
+    try {
+      await boardApi(`/api/board/matches/${fixture.id}/confirm`, 'POST', { homeScore: fixture.homeScore, awayScore: fixture.awayScore, version: fixture.version });
+      setNotice('Result confirmed. Standings have been updated.');
+      await loadLeague();
+    } catch (requestError) { setError(requestError.message); }
+  };
   const logout = async () => { try { await boardApi('/api/auth/logout', 'POST', {}); } catch { /* Session will be cleared on reload if unavailable. */ } setSession(null); setPage('dashboard'); };
 
   return <div className="shell"><aside className="sidebar"><div className="brand"><span className="brand-ball">◔</span><span>Sunday<br /><b>League</b></span></div><nav className="main-nav"><button className={page === 'dashboard' ? 'active' : ''} onClick={() => setPage('dashboard')}><i>▦</i>Dashboard</button><button className={page === 'fixtures' ? 'active' : ''} onClick={() => setPage('fixtures')}><i>◫</i>Fixtures & results</button><button className={page === 'board' ? 'active' : ''} onClick={() => setPage('board')}><i>⚙</i>Board portal</button></nav><div className="sidebar-bottom"><div className="season-tag">SEASON 2026 / 27</div><span>{session ? `Signed in as ${session.displayName}` : 'Public league view'}</span></div></aside><main className="content"><header><div><p className="eyebrow">SUNDAY LEAGUE / 2026—27</p><h1>{page === 'dashboard' ? 'League overview' : page === 'fixtures' ? 'Fixtures & results' : 'Board portal'}</h1></div>{session ? <button className="profile" onClick={logout} title="Sign out">{initials(session.displayName)}</button> : <button className="secondary header-access" onClick={() => setPage('board')}>Board sign in</button>}</header>{notice && <div className="notice">✓ {notice}</div>}{error && <div className="form-error page-error" role="alert">{error}</div>}
     {(page === 'dashboard' || page === 'fixtures') && <div className="league-tabs">{leagues.map(league => <button key={league.id} onClick={() => setSelectedSlug(league.slug)} className={selectedSlug === league.slug ? 'selected' : ''}>{league.name}</button>)}</div>}
     {loading && <p className="loading">Loading public league data…</p>}
     {!loading && page === 'dashboard' && currentLeague && <Dashboard league={currentLeague} standings={standings} fixtures={fixtures} statusFor={statusFor} session={session} goFixtures={() => setPage('fixtures')} />}
-    {!loading && page === 'fixtures' && <ManagedFixtures league={currentLeague} fixtures={fixtures} drafts={drafts} setDrafts={setDrafts} canEdit={canEdit} canConfigure={canConfigure} saveResult={saveResult} updateFixture={updateFixture} cancelFixture={cancelFixture} session={session} goBoard={() => setPage('board')} />}
+    {!loading && page === 'fixtures' && <ManagedFixtures league={currentLeague} fixtures={fixtures} drafts={drafts} setDrafts={setDrafts} canEdit={canEdit} canConfigure={canConfigure} saveResult={saveResult} confirmResult={confirmResult} updateFixture={updateFixture} cancelFixture={cancelFixture} session={session} goBoard={() => setPage('board')} />}
     {page === 'board' && !session && <BoardAccess onAuthenticated={async () => { await loadSession(); setNotice('Signed in successfully.'); }} />}
     {page === 'board' && session && <BoardHome session={session} leagues={leagues} onSuccess={setNotice} onError={setError} />}
   </main></div>;
@@ -93,8 +100,14 @@ function Fixtures({ league, fixtures, drafts, setDrafts, canEdit, saveResult, se
   return <section className="fixtures-page"><div className="toolbar"><div><span className="tag">PUBLIC SCHEDULE</span><h2>{league?.name}</h2></div>{!session && <button className="secondary" onClick={goBoard}>Board sign in</button>}</div>{[...new Set(fixtures.map(fixture => fixture.roundNumber))].map(round => <div className="round card" key={round}><div className="round-head"><h3>Round {round}</h3><span>{fixtures.some(fixture => fixture.roundNumber === round && fixture.homeScore === null) ? 'Upcoming' : 'Completed'}</span></div>{fixtures.filter(fixture => fixture.roundNumber === round).map((fixture, index) => { const draft = drafts[fixture.id] ?? { homeScore: fixture.homeScore ?? '', awayScore: fixture.awayScore ?? '' }; return <div className="fixture" key={fixture.id}><span className="fixture-date">{formatDate(fixture.kickoff)}</span><div className="fixture-team home">{fixture.homeTeam}<TeamMark name={fixture.homeTeam} index={index} small /></div><div className="score-input"><input aria-label={`${fixture.homeTeam} score`} value={draft.homeScore} disabled={!canEdit} onChange={event => setDrafts(values => ({ ...values, [fixture.id]: { ...draft, homeScore: event.target.value } }))} placeholder="–" /><b>:</b><input aria-label={`${fixture.awayTeam} score`} value={draft.awayScore} disabled={!canEdit} onChange={event => setDrafts(values => ({ ...values, [fixture.id]: { ...draft, awayScore: event.target.value } }))} placeholder="–" />{canEdit && <button className="save-score" onClick={() => saveResult(fixture)}>Save</button>}</div><div className="fixture-team"><TeamMark name={fixture.awayTeam} index={index + 1} small />{fixture.awayTeam}</div></div>; })}</div>)}</section>;
 }
 
-function ManagedFixtures({ canConfigure, updateFixture, cancelFixture, ...props }) {
-  return <><Fixtures {...props} />{canConfigure && <FixtureManagement fixtures={props.fixtures} updateFixture={updateFixture} cancelFixture={cancelFixture} />}</>;
+function ManagedFixtures({ canConfigure, updateFixture, cancelFixture, confirmResult, ...props }) {
+  return <><Fixtures {...props} />{canConfigure && <><ResultApproval fixtures={props.fixtures} confirmResult={confirmResult} /><FixtureManagement fixtures={props.fixtures} updateFixture={updateFixture} cancelFixture={cancelFixture} /></>}</>;
+}
+
+function ResultApproval({ fixtures, confirmResult }) {
+  const reported = fixtures.filter(fixture => fixture.status === 'Reported');
+  if (!reported.length) return null;
+  return <section className="fixture-management card"><span className="tag">RESULT APPROVAL</span><h3>Reported results</h3>{reported.map(fixture => <div className="fixture-admin-row" key={fixture.id}><b>R{fixture.roundNumber}</b><span>{fixture.homeTeam} {fixture.homeScore} – {fixture.awayScore} {fixture.awayTeam}</span><button className="primary" onClick={() => confirmResult(fixture)}>Confirm result</button></div>)}</section>;
 }
 
 function FixtureManagement({ fixtures, updateFixture, cancelFixture }) {

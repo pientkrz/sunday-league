@@ -327,9 +327,23 @@ board.MapPut("/matches/{matchId:guid}/result", async (Guid matchId, UpdateResult
     var oldResult = $"{match.HomeScore}-{match.AwayScore}";
     match.HomeScore = request.HomeScore;
     match.AwayScore = request.AwayScore;
-    match.Status = MatchStatus.Confirmed;
+    match.Status = MatchStatus.Reported;
     match.Version = Guid.NewGuid();
     await audit.RecordAsync(user, "match.result.updated", "Match", match.Id, $"{oldResult} => {match.HomeScore}-{match.AwayScore}");
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+board.MapPost("/matches/{matchId:guid}/confirm", async (Guid matchId, UpdateResultRequest request, ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access, AuditService audit) =>
+{
+    var match = await db.Matches.SingleOrDefaultAsync(item => item.Id == matchId);
+    if (match is null) return Results.NotFound();
+    if (!await access.CanConfigureAsync(user, match.LeagueId)) return Results.Forbid();
+    if (match.Version != request.Version) return Results.Conflict(new { error = "This match has changed. Refresh and try again." });
+    if (match.Status != MatchStatus.Reported || match.HomeScore is null || match.AwayScore is null)
+        return Results.Conflict(new { error = "Only a reported result can be confirmed." });
+    match.Status = MatchStatus.Confirmed;
+    match.Version = Guid.NewGuid();
+    await audit.RecordAsync(user, "match.result.confirmed", "Match", match.Id, $"{match.HomeScore}-{match.AwayScore}");
     await db.SaveChangesAsync();
     return Results.NoContent();
 });
