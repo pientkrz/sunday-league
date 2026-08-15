@@ -17,6 +17,7 @@ public sealed record InvitationResponse(string Email, BoardRole Role, Guid? Leag
 public sealed record BoardSession(string DisplayName, string Email, IReadOnlyList<MembershipSummary> Memberships);
 public sealed record MembershipSummary(Guid? LeagueId, string? LeagueName, BoardRole Role);
 public sealed record BoardLeagueConfiguration(Guid Id, string Slug, string Name, int Tier, int PromotionPlaces, int RelegationPlaces, int PlayoffPlaces, int WinPoints, int DrawPoints, int LossPoints, StandingTiebreaker Tiebreaker, bool IsPublished, IReadOnlyList<BoardTeam> Teams);
+public sealed record BoardMemberSummary(Guid MembershipId, string DisplayName, string Email, Guid? LeagueId, string? LeagueName, BoardRole Role);
 public sealed record BoardTeam(Guid Id, string Name, string ShortName, string? CrestUrl);
 public sealed record CreateLeagueRequest(string Name, int PromotionPlaces, int RelegationPlaces, int PlayoffPlaces, int WinPoints, int DrawPoints, int LossPoints, StandingTiebreaker Tiebreaker, bool IsPublished);
 public sealed record UpdateLeagueRequest(string Name, int PromotionPlaces, int RelegationPlaces, int PlayoffPlaces, int WinPoints, int DrawPoints, int LossPoints, StandingTiebreaker Tiebreaker, bool IsPublished);
