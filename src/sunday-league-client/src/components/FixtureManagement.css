@@ -1,0 +1,61 @@
+.fixture-management {
+  max-width: 910px;
+  margin: 20px 0;
+  padding: 22px;
+}
+
+.fixture-management h3 {
+  font-size: 20px;
+  margin: 0 0 6px;
+}
+
+.fixture-management p {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.fixture-admin-row {
+  display: grid;
+  grid-template-columns: 42px minmax(150px, 1fr) 190px auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.fixture-admin-row b {
+  color: var(--green);
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+}
+
+.fixture-admin-row input {
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--ink);
+}
+
+.danger-button {
+  border: 1px solid #d78c76;
+  border-radius: 7px;
+  background: #fff7f4;
+  color: #a14832;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .fixture-admin-row {
+    grid-template-columns: 36px 1fr;
+  }
+
+  .fixture-admin-row input,
+  .fixture-admin-row button {
+    grid-column: 2;
+  }
+}
