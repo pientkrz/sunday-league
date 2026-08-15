@@ -47,6 +47,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         var schedulerResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/leagues/{league.Id}/rounds/random", new CreateRoundRequest(DateTimeOffset.UtcNow.AddDays(7)));
         var teamResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/leagues/{league.Id}/teams", new CreateTeamRequest("Unauthorised FC", "UFC"));
         var crestResponse = await SendCrestWithCsrfAsync(await GetTeamIdAsync(league.Id), "not-a-crest");
+        var memberListResponse = await _client.GetAsync("/api/board/members");
         var rescheduleResponse = await SendWithCsrfAsync(HttpMethod.Put, $"/api/board/matches/{fixture.Id}/kickoff", new UpdateFixtureKickoffRequest(DateTimeOffset.UtcNow.AddDays(8), fixture.Version));
         var cancelResponse = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/matches/{fixture.Id}/cancel", new CancelFixtureRequest(fixture.Version));
 
@@ -54,6 +55,7 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         Assert.Equal(HttpStatusCode.Forbidden, schedulerResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, teamResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, crestResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, memberListResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, rescheduleResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, cancelResponse.StatusCode);
     }
@@ -84,6 +86,26 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         var response = await SendWithCsrfAsync(HttpMethod.Post, $"/api/board/leagues/{league.Id}/rounds/manual", request);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Owner_can_review_and_revoke_non_owner_membership()
+    {
+        await CreateResultsEditorAsync("members-editor@example.com");
+        await CreateOwnerAsync("membership-owner@example.com");
+        await SignInAsync("membership-owner@example.com", "TestPassword!42");
+
+        var listResponse = await _client.GetAsync("/api/board/members");
+        listResponse.EnsureSuccessStatusCode();
+        var members = await listResponse.Content.ReadFromJsonAsync<List<BoardMemberSummary>>();
+        var editor = Assert.Single(members!, member => member.Email == "members-editor@example.com");
+        var revokeResponse = await SendWithCsrfAsync(HttpMethod.Delete, $"/api/board/members/{editor.MembershipId}", new { });
+
+        Assert.Equal(HttpStatusCode.NoContent, revokeResponse.StatusCode);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
+        Assert.False(await db.BoardMemberships.AnyAsync(membership => membership.Id == editor.MembershipId));
+        Assert.True(await db.AuditEvents.AnyAsync(item => item.EntityId == editor.MembershipId && item.Action == "membership.revoked"));
     }
 
     [Fact]
@@ -139,13 +161,13 @@ public sealed class AccessBoundaryTests(ApiFactory factory) : IClassFixture<ApiF
         return await scope.ServiceProvider.GetRequiredService<LeagueDbContext>().Matches.AsNoTracking().SingleAsync(match => match.Id == matchId);
     }
 
-    private async Task<League> CreateResultsEditorAsync()
+    private async Task<League> CreateResultsEditorAsync(string email = "editor@example.com")
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<LeagueDbContext>();
         var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var league = await db.Leagues.SingleAsync();
-        var user = new ApplicationUser { UserName = "editor@example.com", Email = "editor@example.com", EmailConfirmed = true, DisplayName = "Result Editor" };
+        var user = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true, DisplayName = "Result Editor" };
         var result = await users.CreateAsync(user, "TestPassword!42");
         Assert.True(result.Succeeded);
         db.BoardMemberships.Add(new BoardMembership { UserId = user.Id, LeagueId = league.Id, Role = BoardRole.ResultsEditor });

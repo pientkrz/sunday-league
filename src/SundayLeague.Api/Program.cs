@@ -187,6 +187,25 @@ board.MapGet("/leagues", async (ClaimsPrincipal user, LeagueDbContext db, BoardA
         league.Teams.OrderBy(team => team.Name).Select(team => new BoardTeam(team.Id, team.Name, team.ShortName, team.CrestUrl)).ToList())).ToListAsync();
     return Results.Ok(leagues);
 });
+board.MapGet("/members", async (ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access) =>
+{
+    if (!await access.IsOwnerAsync(user)) return Results.Forbid();
+    var members = await db.BoardMemberships.OrderBy(membership => membership.User.Email).Select(membership => new BoardMemberSummary(
+        membership.Id, membership.User.DisplayName, membership.User.Email!, membership.LeagueId,
+        membership.League == null ? null : membership.League.Name, membership.Role)).ToListAsync();
+    return Results.Ok(members);
+});
+board.MapDelete("/members/{membershipId:guid}", async (Guid membershipId, ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access, AuditService audit) =>
+{
+    if (!await access.IsOwnerAsync(user)) return Results.Forbid();
+    var membership = await db.BoardMemberships.Include(item => item.User).SingleOrDefaultAsync(item => item.Id == membershipId);
+    if (membership is null) return Results.NotFound();
+    if (membership.Role == BoardRole.Owner) return Results.Conflict(new { error = "Owner access cannot be revoked here." });
+    db.BoardMemberships.Remove(membership);
+    await audit.RecordAsync(user, "membership.revoked", "BoardMembership", membership.Id, $"{membership.User.Email} ({membership.Role})");
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
 board.MapPost("/leagues", async (CreateLeagueRequest request, ClaimsPrincipal user, LeagueDbContext db, BoardAuthorizationService access, AuditService audit) =>
 {
     if (!await access.IsOwnerAsync(user)) return Results.Forbid();

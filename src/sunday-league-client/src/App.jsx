@@ -3,6 +3,7 @@ import './App.css';
 import './components/FixtureManagement.css';
 import { api, boardApi, boardFormApi } from './api/client';
 import BoardAccess from './components/BoardAccess';
+import MemberDirectory from './components/MemberDirectory';
 
 const colours = ['#2f6fed', '#e85d3f', '#7057d8', '#21a179', '#d59a13', '#c43c68'];
 const initials = name => name.split(' ').map(word => word[0]).join('').slice(0, 2).toUpperCase();
@@ -163,6 +164,18 @@ function HierarchySettings({ leagues, onSuccess, onError, reload }) {
 function InviteMember({ leagues, onSuccess, onError }) {
   const [form, setForm] = useState({ email: '', role: 'ResultsEditor', leagueId: '' });
   const [sending, setSending] = useState(false);
-  const send = async event => { event.preventDefault(); setSending(true); try { await boardApi('/api/board/invitations', 'POST', { ...form, leagueId: form.leagueId || null }); setForm({ email: '', role: 'ResultsEditor', leagueId: '' }); onSuccess('Invitation created. Send the registration link through your approved email service.'); } catch (requestError) { onError(requestError.message); } finally { setSending(false); } };
-  return <form className="settings-card card invite-card" onSubmit={send}><span className="tag">MEMBERSHIP</span><h2>Invite board member</h2><p>Only invited people can create an administrative account.</p><label>Email<input type="email" value={form.email} onChange={event => setForm(values => ({ ...values, email: event.target.value }))} required /></label><label>Role<select value={form.role} onChange={event => setForm(values => ({ ...values, role: event.target.value }))}><option value="CompetitionAdmin">Competition Admin</option><option value="ResultsEditor">Results Editor</option><option value="Viewer">Viewer</option></select></label><label>League scope<select value={form.leagueId} required={form.role !== 'Viewer'} onChange={event => setForm(values => ({ ...values, leagueId: event.target.value }))}><option value="">{form.role === 'Viewer' ? 'All leagues' : 'Choose a league'}</option>{leagues.map(league => <option key={league.id} value={league.id}>{league.name}</option>)}</select></label><button className="primary" disabled={sending}>{sending ? 'Creating…' : 'Create invitation'}</button></form>;
+  const send = async event => {
+    event.preventDefault();
+    setSending(true);
+    try {
+      await boardApi('/api/board/invitations', 'POST', { ...form, leagueId: form.leagueId || null });
+      setForm({ email: '', role: 'ResultsEditor', leagueId: '' });
+      onSuccess('Invitation created. Send the registration link through your approved email service.');
+    } catch (requestError) {
+      onError(requestError.message);
+    } finally {
+      setSending(false);
+    }
+  };
+  return <><form className="settings-card card invite-card" onSubmit={send}><span className="tag">MEMBERSHIP</span><h2>Invite board member</h2><p>Only invited people can create an administrative account.</p><label>Email<input type="email" value={form.email} onChange={event => setForm(values => ({ ...values, email: event.target.value }))} required /></label><label>Role<select value={form.role} onChange={event => setForm(values => ({ ...values, role: event.target.value }))}><option value="CompetitionAdmin">Competition Admin</option><option value="ResultsEditor">Results Editor</option><option value="Viewer">Viewer</option></select></label><label>League scope<select value={form.leagueId} required={form.role !== 'Viewer'} onChange={event => setForm(values => ({ ...values, leagueId: event.target.value }))}><option value="">{form.role === 'Viewer' ? 'All leagues' : 'Choose a league'}</option>{leagues.map(league => <option key={league.id} value={league.id}>{league.name}</option>)}</select></label><button className="primary" disabled={sending}>{sending ? 'Creating…' : 'Create invitation'}</button></form><MemberDirectory onSuccess={onSuccess} onError={onError} /></>;
 }
